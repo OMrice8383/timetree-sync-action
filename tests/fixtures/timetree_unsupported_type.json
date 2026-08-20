@@ -1,31 +1,23 @@
 {
   "fixture_meta": {
-    "source": "sanitized_live_timetree_payload",
-    "contains_secrets": false,
-    "contains_real_title_note_location": false,
-    "canonical_identity_note": "fixture IDs are synthetic; production identity is TimeTree uuid"
+    "source": "synthetic_contract_fixture",
+    "purpose": "P3 unknown TimeTree type must remain unsupported",
+    "contains_secrets": false
   },
   "id": "fixture-timetree-unsupported",
   "uuid": "fixture-timetree-unsupported",
   "calendar_id": 123456789,
-  "title": "Fixture fixture-timetree-unsupported",
-  "all_day": true,
-  "start_at": 1894665600000,
-  "start_timezone": "UTC",
-  "end_at": 1894665600000,
-  "end_timezone": "UTC",
+  "title": "Fixture unsupported type",
+  "all_day": false,
+  "start_at": 1893492000000,
+  "start_timezone": "Asia/Tokyo",
+  "end_at": 1893495600000,
+  "end_timezone": "Asia/Tokyo",
   "category": 1,
-  "type": 1,
-  "label_id": 1,
+  "type": 999,
   "location": null,
   "note": null,
-  "url": null,
-  "attendees": [],
-  "alerts": [],
-  "recurrences": [
-    "RRULE:FREQ=YEARLY"
-  ],
+  "recurrences": [],
   "parent_id": null,
-  "recurring_uuid": null,
-  "deactivated_at": null
+  "recurring_uuid": null
 }

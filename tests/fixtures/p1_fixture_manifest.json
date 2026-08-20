@@ -5,6 +5,7 @@
     "google_recurrence.json",
     "google_single.json",
     "timetree_all_day.json",
+    "timetree_birthday.json",
     "timetree_memo.json",
     "timetree_recurrence.json",
     "timetree_single.json",
@@ -12,9 +13,21 @@
   ],
   "timetree": {
     "live_payload_fixture_count": 4,
-    "synthetic_fixture_count": 1,
-    "synthetic_fixture": "timetree_memo.json",
-    "synthetic_reason": "No live memo was present in the P1 full event snapshot."
+    "synthetic_fixture_count": 2,
+    "synthetic_fixtures": [
+      "timetree_memo.json",
+      "timetree_unsupported_type.json"
+    ],
+    "synthetic_reasons": {
+      "timetree_memo.json": "No live memo was present in the P1 full event snapshot.",
+      "timetree_unsupported_type.json": "Unknown type contract fixture for P3 safe-stop testing."
+    },
+    "classification_contract": {
+      "category_1_type_0": "SYNC",
+      "category_2": "IGNORE_KNOWN_MEMO",
+      "type_1": "IGNORE_KNOWN_BIRTHDAY",
+      "unknown_category_or_type": "UNSUPPORTED"
+    }
   },
   "google": {
     "live_payload_fixture_count": 3,
