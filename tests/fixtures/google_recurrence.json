@@ -1,0 +1,34 @@
+{
+  "fixture_meta": {
+    "source": "sanitized_live_google_api_payload",
+    "contains_secrets": false,
+    "real_remote_id_removed": true
+  },
+  "kind": "calendar#event",
+  "id": "fixture-google-recurrence",
+  "status": "confirmed",
+  "eventType": "default",
+  "summary": "Fixture fixture-google-recurrence",
+  "description": "Fixture description",
+  "location": null,
+  "start": {
+    "dateTime": "2030-02-05T09:00:00+09:00",
+    "timeZone": "Asia/Tokyo"
+  },
+  "end": {
+    "dateTime": "2030-02-05T09:30:00+09:00",
+    "timeZone": "Asia/Tokyo"
+  },
+  "recurrence": [
+    "RRULE:FREQ=WEEKLY;COUNT=3;BYDAY=TU"
+  ],
+  "recurringEventId": null,
+  "originalStartTime": null,
+  "extendedProperties": {
+    "private": {
+      "sync_source": "fixture",
+      "timetree_id": "fixture-google-recurrence-timetree",
+      "bridge_version": "fixture"
+    }
+  }
+}

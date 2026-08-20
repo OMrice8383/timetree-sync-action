@@ -1,0 +1,45 @@
+{
+  "generated_at_utc": "2026-08-20T14:49:58.141603+00:00",
+  "fixture_files": [
+    "google_all_day.json",
+    "google_recurrence.json",
+    "google_single.json",
+    "timetree_all_day.json",
+    "timetree_memo.json",
+    "timetree_recurrence.json",
+    "timetree_single.json",
+    "timetree_unsupported_type.json"
+  ],
+  "timetree": {
+    "live_payload_fixture_count": 4,
+    "synthetic_fixture_count": 1,
+    "synthetic_fixture": "timetree_memo.json",
+    "synthetic_reason": "No live memo was present in the P1 full event snapshot."
+  },
+  "google": {
+    "live_payload_fixture_count": 3,
+    "temporary_remote_artifacts_cleaned": true,
+    "active_test_artifacts_after_cleanup": 0
+  },
+  "privacy": {
+    "credentials_written": false,
+    "real_titles_notes_locations_written": false,
+    "real_remote_event_ids_written": false
+  },
+  "supplemental_contract_fixtures": [
+    "google_empty_title.json",
+    "google_offset_only.json",
+    "timetree_timezone_both_missing.json",
+    "timetree_timezone_missing_end.json",
+    "timetree_timezone_missing_start.json"
+  ],
+  "timezone_fallback_contract": {
+    "live_missing_timezone_cases_present": false,
+    "synthetic_missing_timezone_fixtures_added": 3,
+    "rule": "Each missing/invalid timed timezone falls back independently to config.default_timezone with WARN; never copy the other side blindly."
+  },
+  "google_edge_contracts": {
+    "offset_only": "DOC-CONFIRMED / DESIGN DEFINED; fixture synthetic, live E2E not claimed",
+    "empty_title": "UNSUPPORTED; no placeholder title"
+  }
+}

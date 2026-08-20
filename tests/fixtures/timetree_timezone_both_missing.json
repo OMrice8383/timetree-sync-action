@@ -1,0 +1,33 @@
+{
+  "fixture_meta": {
+    "source": "synthetic_contract_fixture",
+    "purpose": "P1 timezone fallback: both timezones missing",
+    "contains_secrets": false
+  },
+  "id": "fixture-tt-tz-both-missing",
+  "uuid": "fixture-tt-tz-both-missing",
+  "calendar_id": 123456789,
+  "title": "Fixture both timezones missing",
+  "all_day": false,
+  "start_at": 1893456000000,
+  "start_timezone": null,
+  "end_at": 1893459600000,
+  "end_timezone": null,
+  "category": 1,
+  "type": 0,
+  "label_id": 3,
+  "location": null,
+  "note": null,
+  "url": null,
+  "attendees": [],
+  "alerts": [],
+  "recurrences": [],
+  "parent_id": null,
+  "recurring_uuid": null,
+  "deactivated_at": null,
+  "expected_contract": {
+    "start_effective_timezone": "config.default_timezone",
+    "end_effective_timezone": "config.default_timezone",
+    "warn": true
+  }
+}

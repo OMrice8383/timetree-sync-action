@@ -1,0 +1,23 @@
+{
+  "fixture_meta": {
+    "source": "synthetic_contract_fixture",
+    "purpose": "P1 Google offset-only input contract",
+    "contains_secrets": false,
+    "doc_confirmed_not_live_e2e": true
+  },
+  "kind": "calendar#event",
+  "id": "fixture-google-offset-only",
+  "status": "confirmed",
+  "eventType": "default",
+  "summary": "Fixture Google offset only",
+  "start": {
+    "dateTime": "2030-01-01T10:00:00+09:00"
+  },
+  "end": {
+    "dateTime": "2030-01-01T11:00:00+09:00"
+  },
+  "expected_contract": {
+    "if_offset_matches_default_timezone": "accept default timezone as effective timezone",
+    "if_offset_mismatches_default_timezone": "UNSUPPORTED"
+  }
+}

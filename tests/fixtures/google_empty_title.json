@@ -1,0 +1,24 @@
+{
+  "fixture_meta": {
+    "source": "synthetic_contract_fixture",
+    "purpose": "P1 Google empty-title input contract",
+    "contains_secrets": false
+  },
+  "kind": "calendar#event",
+  "id": "fixture-google-empty-title",
+  "status": "confirmed",
+  "eventType": "default",
+  "summary": "",
+  "start": {
+    "dateTime": "2030-01-01T10:00:00+09:00",
+    "timeZone": "Asia/Tokyo"
+  },
+  "end": {
+    "dateTime": "2030-01-01T11:00:00+09:00",
+    "timeZone": "Asia/Tokyo"
+  },
+  "expected_contract": {
+    "classification": "UNSUPPORTED",
+    "invent_placeholder_title": false
+  }
+}

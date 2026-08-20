@@ -1,0 +1,32 @@
+{
+  "fixture_meta": {
+    "source": "sanitized_live_google_api_payload",
+    "contains_secrets": false,
+    "real_remote_id_removed": true
+  },
+  "kind": "calendar#event",
+  "id": "fixture-google-single",
+  "status": "confirmed",
+  "eventType": "default",
+  "summary": "Fixture fixture-google-single",
+  "description": "Fixture description",
+  "location": "Fixture location",
+  "start": {
+    "dateTime": "2030-02-01T10:00:00+09:00",
+    "timeZone": "Asia/Tokyo"
+  },
+  "end": {
+    "dateTime": "2030-02-01T11:00:00+09:00",
+    "timeZone": "Asia/Tokyo"
+  },
+  "recurrence": null,
+  "recurringEventId": null,
+  "originalStartTime": null,
+  "extendedProperties": {
+    "private": {
+      "sync_source": "fixture",
+      "timetree_id": "fixture-google-single-timetree",
+      "bridge_version": "fixture"
+    }
+  }
+}

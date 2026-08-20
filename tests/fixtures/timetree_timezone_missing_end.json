@@ -1,0 +1,34 @@
+{
+  "fixture_meta": {
+    "source": "synthetic_contract_fixture",
+    "purpose": "P1 timezone fallback: end timezone missing only",
+    "contains_secrets": false
+  },
+  "id": "fixture-tt-tz-missing-end",
+  "uuid": "fixture-tt-tz-missing-end",
+  "calendar_id": 123456789,
+  "title": "Fixture timezone missing end",
+  "all_day": false,
+  "start_at": 1893456000000,
+  "start_timezone": "Asia/Tokyo",
+  "end_at": 1893459600000,
+  "end_timezone": null,
+  "category": 1,
+  "type": 0,
+  "label_id": 3,
+  "location": null,
+  "note": null,
+  "url": null,
+  "attendees": [],
+  "alerts": [],
+  "recurrences": [],
+  "parent_id": null,
+  "recurring_uuid": null,
+  "deactivated_at": null,
+  "expected_contract": {
+    "start_effective_timezone": "Asia/Tokyo",
+    "end_effective_timezone": "config.default_timezone",
+    "warn": true,
+    "must_not_copy_other_side_timezone": true
+  }
+}

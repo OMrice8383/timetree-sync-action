@@ -1,0 +1,28 @@
+{
+  "fixture_meta": {
+    "source": "synthetic_contract_fixture",
+    "reason": "No live memo was present in the P1 full event snapshot.",
+    "contains_secrets": false
+  },
+  "id": "fixture-timetree-memo",
+  "uuid": "fixture-timetree-memo",
+  "calendar_id": 123456789,
+  "title": "Fixture memo",
+  "all_day": true,
+  "start_at": 1893456000000,
+  "start_timezone": "UTC",
+  "end_at": 1893456000000,
+  "end_timezone": "UTC",
+  "category": 2,
+  "type": 0,
+  "label_id": 3,
+  "location": null,
+  "note": "Fixture memo body",
+  "url": null,
+  "attendees": [],
+  "alerts": [],
+  "recurrences": [],
+  "parent_id": null,
+  "recurring_uuid": null,
+  "deactivated_at": null
+}

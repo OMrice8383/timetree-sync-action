@@ -1,0 +1,30 @@
+{
+  "fixture_meta": {
+    "source": "sanitized_live_google_api_payload",
+    "contains_secrets": false,
+    "real_remote_id_removed": true
+  },
+  "kind": "calendar#event",
+  "id": "fixture-google-all_day",
+  "status": "confirmed",
+  "eventType": "default",
+  "summary": "Fixture fixture-google-all_day",
+  "description": "Fixture description",
+  "location": null,
+  "start": {
+    "date": "2030-02-02"
+  },
+  "end": {
+    "date": "2030-02-03"
+  },
+  "recurrence": null,
+  "recurringEventId": null,
+  "originalStartTime": null,
+  "extendedProperties": {
+    "private": {
+      "sync_source": "fixture",
+      "timetree_id": "fixture-google-all_day-timetree",
+      "bridge_version": "fixture"
+    }
+  }
+}

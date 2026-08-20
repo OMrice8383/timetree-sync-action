@@ -1,0 +1,31 @@
+{
+  "fixture_meta": {
+    "source": "sanitized_live_timetree_payload",
+    "contains_secrets": false,
+    "contains_real_title_note_location": false,
+    "canonical_identity_note": "fixture IDs are synthetic; production identity is TimeTree uuid"
+  },
+  "id": "fixture-timetree-recurrence",
+  "uuid": "fixture-timetree-recurrence",
+  "calendar_id": 123456789,
+  "title": "Fixture fixture-timetree-recurrence",
+  "all_day": true,
+  "start_at": 1894060800000,
+  "start_timezone": "UTC",
+  "end_at": 1894060800000,
+  "end_timezone": "UTC",
+  "category": 1,
+  "type": 0,
+  "label_id": 10,
+  "location": null,
+  "note": null,
+  "url": null,
+  "attendees": [],
+  "alerts": [],
+  "recurrences": [
+    "RRULE:FREQ=YEARLY"
+  ],
+  "parent_id": null,
+  "recurring_uuid": null,
+  "deactivated_at": null
+}

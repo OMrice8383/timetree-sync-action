@@ -1,0 +1,29 @@
+{
+  "fixture_meta": {
+    "source": "sanitized_live_timetree_payload",
+    "contains_secrets": false,
+    "contains_real_title_note_location": false,
+    "canonical_identity_note": "fixture IDs are synthetic; production identity is TimeTree uuid"
+  },
+  "id": "fixture-timetree-single",
+  "uuid": "fixture-timetree-single",
+  "calendar_id": 123456789,
+  "title": "Fixture fixture-timetree-single",
+  "all_day": false,
+  "start_at": 1893492000000,
+  "start_timezone": "Asia/Tokyo",
+  "end_at": 1893499200000,
+  "end_timezone": "Asia/Tokyo",
+  "category": 1,
+  "type": 0,
+  "label_id": 10,
+  "location": null,
+  "note": null,
+  "url": null,
+  "attendees": [],
+  "alerts": [],
+  "recurrences": [],
+  "parent_id": null,
+  "recurring_uuid": null,
+  "deactivated_at": null
+}
