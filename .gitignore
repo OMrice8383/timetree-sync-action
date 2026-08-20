@@ -36,3 +36,8 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+# Calendar Bridge runtime state
+state/*.db
+state/*.db-*
+state/*.lock
+logs/*.jsonl

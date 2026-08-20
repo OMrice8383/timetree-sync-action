@@ -1,0 +1,27 @@
+[bridge]
+version = "0.1"
+default_timezone = "Asia/Tokyo"
+
+[timetree]
+calendar_id = "1016563008"
+incremental_interval_seconds = 300
+overlap_seconds = 30
+
+[google]
+calendar_id = "eb7641a1d9f153b9d1dbbb9b905f9cee056744a38b829f604eded4bfe47a1fe1@group.calendar.google.com"
+incremental_interval_seconds = 60
+
+[reconcile]
+interval_seconds = 3600
+
+[verify]
+interval_seconds = 86400
+
+[exporter]
+calendar_code = "2EeVifbGQLAx"
+
+[state]
+database = "state/calendar.db"
+
+[logging]
+path = "logs/bridge.jsonl"
