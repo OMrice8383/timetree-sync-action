@@ -4,24 +4,24 @@ Last Updated: 2026-08-21
 
 ## Current Phase
 
-P0 Baseline / Dependency Freeze: COMPLETE  
-P1 Live Contract Discovery: COMPLETE  
-P2 Foundation: COMPLETE  
-P3 Normalization Core: COMPLETE  
-P4 Google Calendar Client: COMPLETE + LIVE E2E  
-P5 TimeTree MCP Client: COMPLETE + LIVE CRUD  
-P6 Recurrence Series Core: NEXT  
-P7 Recurrence Exception Gate: NOT STARTED  
+P0 Baseline / Dependency Freeze: COMPLETE
+P1 Live Contract Discovery: COMPLETE
+P2 Foundation: COMPLETE
+P3 Normalization Core: COMPLETE
+P4 Google Calendar Client: COMPLETE + LIVE E2E
+P5 TimeTree MCP Client: COMPLETE + LIVE CRUD
+P6 Recurrence Series Core: NEXT
+P7 Recurrence Exception Gate: NOT STARTED
 P8-P15: NOT STARTED
 
 ## Canonical Design
 
 Priority:
 
-Requirements  
-→ Basic Design  
-→ Detailed Design  
-→ Implementation Plan  
+Requirements
+→ Basic Design
+→ Detailed Design
+→ Implementation Plan
 → Implementation
 
 Current implementation order follows:
@@ -30,14 +30,14 @@ Current implementation order follows:
 
 V1 architecture:
 
-TimeTree  
-↕  
-TimeTree-MCP (Primary)  
-↕  
-Python Calendar Bridge  
-↕  
-Dedicated Google Calendar `TimeTree Bridge`  
-↕  
+TimeTree
+↕
+TimeTree-MCP (Primary)
+↕
+Python Calendar Bridge
+↕
+Dedicated Google Calendar `TimeTree Bridge`
+↕
 ChatGPT Web / Notion
 
 TimeTree is the Source of Truth.
