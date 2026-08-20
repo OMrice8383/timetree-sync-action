@@ -4,6 +4,7 @@ import hashlib
 import json
 from datetime import UTC, date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .models import SUPPORTED_RECURRENCE_PROPERTIES, NormalizedEvent
 
@@ -152,6 +153,55 @@ def _canonicalize_exdate(line: str) -> str:
     values = [value.strip() for value in raw_values.split(",") if value.strip()]
     if not values:
         raise CanonicalizationError("EXDATE requires at least one value")
+
+    param_map = dict(params)
+    if param_map.get("VALUE") == "DATE":
+        left_canonical = "EXDATE" + "".join(
+            f";{key}={value}" for key, value in sorted(params)
+        )
+        return left_canonical + ":" + ",".join(sorted(set(values)))
+
+    tzid = param_map.get("TZID")
+    if tzid is not None:
+        try:
+            zone = ZoneInfo(tzid)
+        except ZoneInfoNotFoundError as exc:
+            raise CanonicalizationError(
+                f"invalid EXDATE TZID: {tzid!r}"
+            ) from exc
+
+        utc_values: list[str] = []
+        for value in values:
+            try:
+                local_value = datetime.strptime(
+                    value,
+                    "%Y%m%dT%H%M%S",
+                ).replace(tzinfo=zone)
+            except ValueError as exc:
+                raise CanonicalizationError(
+                    f"invalid TZID EXDATE value: {value!r}"
+                ) from exc
+            utc_values.append(
+                local_value.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+            )
+        return "EXDATE:" + ",".join(sorted(set(utc_values)))
+
+    if all(value.endswith("Z") for value in values):
+        utc_values = []
+        for value in values:
+            try:
+                parsed = datetime.strptime(
+                    value,
+                    "%Y%m%dT%H%M%S%z",
+                )
+            except ValueError as exc:
+                raise CanonicalizationError(
+                    f"invalid UTC EXDATE value: {value!r}"
+                ) from exc
+            utc_values.append(
+                parsed.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+            )
+        return "EXDATE:" + ",".join(sorted(set(utc_values)))
 
     left_canonical = "EXDATE" + "".join(
         f";{key}={value}" for key, value in sorted(params)

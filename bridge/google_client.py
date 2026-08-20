@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .adapters import NormalizationError, UnsupportedEventError, normalize_google_event
 from .models import ChangeType, EventChange, EventKind, NormalizedEvent
+from .recurrence import RecurrenceContractError, recurrence_lines_for_event
 
 GOOGLE_CALENDAR_SCOPES = ("https://www.googleapis.com/auth/calendar",)
 
@@ -227,12 +228,23 @@ def google_event_body(
     *,
     private_properties: Mapping[str, str] | None = None,
     allow_recurrence_write: bool = False,
+    clear_recurrence: bool = False,
 ) -> dict[str, Any]:
-    if (
-        event.kind is not EventKind.SINGLE or event.recurrence
-    ) and not allow_recurrence_write:
+    if event.kind is EventKind.EXCEPTION:
+        raise GoogleClientError(
+            "recurrence exception writes are gated until P7 safety gate"
+        )
+
+    series_write = event.kind is EventKind.SERIES or bool(event.recurrence)
+    if (series_write or clear_recurrence) and not allow_recurrence_write:
         raise GoogleClientError(
             "recurrence writes are gated until P6 Recurrence Series Core"
+        )
+    if clear_recurrence and (
+        event.kind is not EventKind.SINGLE or event.recurrence
+    ):
+        raise GoogleClientError(
+            "recurrence removal requires a single event with empty recurrence"
         )
 
     body: dict[str, Any] = {
@@ -254,8 +266,14 @@ def google_event_body(
             "timeZone": event.end_timezone,
         }
 
-    if allow_recurrence_write:
-        body["recurrence"] = list(event.recurrence.lines)
+    if series_write:
+        try:
+            recurrence_lines = recurrence_lines_for_event(event)
+        except RecurrenceContractError as exc:
+            raise GoogleClientError(str(exc)) from exc
+        body["recurrence"] = list(recurrence_lines)
+    elif clear_recurrence:
+        body["recurrence"] = []
 
     if private_properties is not None:
         body["extendedProperties"] = {"private": dict(private_properties)}

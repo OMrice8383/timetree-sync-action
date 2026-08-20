@@ -10,6 +10,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .models import EventKind, NormalizedEvent
+from .recurrence import RecurrenceContractError, recurrence_lines_for_event
 
 _ALLOWED_MCP_ENV = frozenset({"TIMETREE_EMAIL", "TIMETREE_PASSWORD"})
 _P1_REQUIRED_EVENT_FIELDS = frozenset(
@@ -39,6 +40,7 @@ _SUPPORTED_UPDATE_FIELDS = frozenset(
         "end_timezone",
         "description",
         "location",
+        "recurrence",
     }
 )
 
@@ -153,10 +155,9 @@ def _datetime_to_ms(value: datetime) -> int:
     return int(value.astimezone(UTC).timestamp() * 1000)
 
 
-def _local_midnight_ms(value: date, timezone: str) -> int:
-    zone = _zoneinfo(timezone)
-    local_midnight = datetime.combine(value, time.min, tzinfo=zone)
-    return _datetime_to_ms(local_midnight)
+def _utc_midnight_ms(value: date) -> int:
+    utc_midnight = datetime.combine(value, time.min, tzinfo=UTC)
+    return _datetime_to_ms(utc_midnight)
 
 
 def _validate_mcp_env(env: Mapping[str, str]) -> dict[str, str]:
@@ -310,7 +311,8 @@ def timetree_event_body(
         raise TimeTreeWriteGateError(
             "recurrence exception writes are gated until P7 safety gate"
         )
-    if (event.kind is EventKind.SERIES or event.recurrence) and not allow_recurrence_write:
+    series_write = event.kind is EventKind.SERIES or bool(event.recurrence)
+    if series_write and not allow_recurrence_write:
         raise TimeTreeWriteGateError(
             "recurrence series writes are gated until P6 Recurrence Series Core"
         )
@@ -328,10 +330,10 @@ def timetree_event_body(
         inclusive_end = event.end - timedelta(days=1)
         body.update(
             {
-                "start_at": _local_midnight_ms(event.start, default_timezone),
-                "start_timezone": default_timezone,
-                "end_at": _local_midnight_ms(inclusive_end, default_timezone),
-                "end_timezone": default_timezone,
+                "start_at": _utc_midnight_ms(event.start),
+                "start_timezone": "UTC",
+                "end_at": _utc_midnight_ms(inclusive_end),
+                "end_timezone": "UTC",
             }
         )
     else:
@@ -350,8 +352,12 @@ def timetree_event_body(
         body["note"] = event.description
     if event.location is not None:
         body["location"] = event.location
-    if allow_recurrence_write and event.recurrence:
-        body["recurrences"] = list(event.recurrence.lines)
+    if series_write:
+        try:
+            recurrence_lines = recurrence_lines_for_event(event)
+        except RecurrenceContractError as exc:
+            raise TimeTreeWriteGateError(str(exc)) from exc
+        body["recurrences"] = list(recurrence_lines)
     return body
 
 
@@ -369,7 +375,12 @@ def timetree_update_body(
     unsupported = requested - _SUPPORTED_UPDATE_FIELDS
     if unsupported:
         names = ", ".join(sorted(unsupported))
-        raise TimeTreeWriteGateError(f"unsupported P5 TimeTree update fields: {names}")
+        raise TimeTreeWriteGateError(f"unsupported TimeTree update fields: {names}")
+    recurrence_requested = "recurrence" in requested
+    if recurrence_requested and not allow_recurrence_write:
+        raise TimeTreeWriteGateError(
+            "recurrence writes are gated until P6 Recurrence Series Core"
+        )
     if event.kind is EventKind.EXCEPTION:
         raise TimeTreeWriteGateError(
             "recurrence exception writes are gated until P7 safety gate"
@@ -405,6 +416,12 @@ def timetree_update_body(
         body["end_timezone"] = full["end_timezone"]
     if "all_day" in requested:
         body["all_day"] = full["all_day"]
+    if recurrence_requested:
+        try:
+            recurrence_lines = recurrence_lines_for_event(event)
+        except RecurrenceContractError as exc:
+            raise TimeTreeWriteGateError(str(exc)) from exc
+        body["recurrences"] = list(recurrence_lines)
 
     return body
 

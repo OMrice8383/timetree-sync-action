@@ -241,12 +241,18 @@ class TimeTreeClientTests(unittest.IsolatedAsyncioTestCase):
 
     def test_all_day_write_uses_inclusive_timetree_end(self):
         body = timetree_event_body(single_event(all_day=True), calendar_id="123", default_timezone="Asia/Tokyo")
-        start = datetime.fromtimestamp(body["start_at"] / 1000, tz=ZoneInfo("Asia/Tokyo"))
-        inclusive_end = datetime.fromtimestamp(body["end_at"] / 1000, tz=ZoneInfo("Asia/Tokyo"))
-        self.assertEqual(start.date(), date(2030, 1, 2))
-        self.assertEqual(inclusive_end.date(), date(2030, 1, 3))
-        self.assertEqual(body["start_timezone"], "Asia/Tokyo")
-        self.assertEqual(body["end_timezone"], "Asia/Tokyo")
+        start = datetime.fromtimestamp(body["start_at"] / 1000, tz=ZoneInfo("UTC"))
+        inclusive_end = datetime.fromtimestamp(
+            body["end_at"] / 1000,
+            tz=ZoneInfo("UTC"),
+        )
+        self.assertEqual(start, datetime(2030, 1, 2, tzinfo=ZoneInfo("UTC")))
+        self.assertEqual(
+            inclusive_end,
+            datetime(2030, 1, 3, tzinfo=ZoneInfo("UTC")),
+        )
+        self.assertEqual(body["start_timezone"], "UTC")
+        self.assertEqual(body["end_timezone"], "UTC")
 
     def test_update_only_emits_requested_semantic_fields(self):
         body = timetree_update_body(single_event(title="Changed"), fields={"title"}, calendar_id="123", default_timezone="Asia/Tokyo")

@@ -60,6 +60,19 @@ class RecurrenceCanonicalizationTests(unittest.TestCase):
         self.assertEqual(canonicalize_recurrence(a), canonicalize_recurrence(b))
 
 
+    def test_timed_exdate_utc_and_tzid_forms_are_same_instant(self) -> None:
+        utc_form = (
+            "EXDATE:20260918T010000Z",
+        )
+        tzid_form = (
+            "EXDATE;TZID=Asia/Tokyo:20260918T100000",
+        )
+        self.assertEqual(
+            canonicalize_recurrence(utc_form),
+            canonicalize_recurrence(tzid_form),
+        )
+
+
 class EventHashTests(unittest.TestCase):
     def test_same_instant_different_datetime_offset_has_same_hash(self) -> None:
         event = base_event()

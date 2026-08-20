@@ -15,6 +15,7 @@ from .models import (
     Recurrence,
     Source,
 )
+from .recurrence import RecurrenceContractError, validate_recurrence_lines
 
 
 class NormalizationError(ValueError):
@@ -170,7 +171,7 @@ def _normalize_recurrence(raw_lines: Any) -> Recurrence:
     for raw_line in raw_lines:
         if not isinstance(raw_line, str) or ":" not in raw_line:
             raise NormalizationError(f"invalid recurrence line: {raw_line!r}")
-        property_name = raw_line.split(":", 1)[0].strip().upper()
+        property_name = raw_line.split(":", 1)[0].split(";", 1)[0].strip().upper()
         if property_name not in SUPPORTED_RECURRENCE_PROPERTIES:
             raise UnsupportedEventError(
                 "UNSUPPORTED_RECURRENCE_FEATURE",
@@ -250,6 +251,20 @@ def normalize_timetree_event(
             "UNSUPPORTED_RECURRENCE_TIMEZONE",
             "recurring series requires the same effective start/end timezone",
         )
+    if recurrence:
+        try:
+            recurrence = Recurrence(
+                validate_recurrence_lines(
+                    recurrence.lines,
+                    all_day=all_day,
+                    timezone=normalized_start_tz,
+                )
+            )
+        except RecurrenceContractError as exc:
+            raise UnsupportedEventError(
+                "UNSUPPORTED_RECURRENCE_FEATURE",
+                str(exc),
+            ) from exc
 
     return NormalizedEvent(
         source=Source.TIMETREE,
@@ -358,6 +373,20 @@ def normalize_google_event(
             "UNSUPPORTED_RECURRENCE_TIMEZONE",
             "recurring series requires the same effective start/end timezone",
         )
+    if recurrence:
+        try:
+            recurrence = Recurrence(
+                validate_recurrence_lines(
+                    recurrence.lines,
+                    all_day=all_day,
+                    timezone=start_timezone,
+                )
+            )
+        except RecurrenceContractError as exc:
+            raise UnsupportedEventError(
+                "UNSUPPORTED_RECURRENCE_FEATURE",
+                str(exc),
+            ) from exc
 
     recurring_event_id = raw.get("recurringEventId")
     original_start_raw = raw.get("originalStartTime")
