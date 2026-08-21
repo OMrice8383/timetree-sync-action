@@ -288,7 +288,7 @@ class BootstrapRunner:
             )
         return tuple(changes), token
 
-    def _google_target_preflight(self) -> None:
+    def _google_target_preflight(self) -> Mapping[str, Any]:
         getter = getattr(self.google_client, "get_calendar_metadata", None)
         if not callable(getter):
             raise BootstrapError(
@@ -315,6 +315,7 @@ class BootstrapRunner:
                 "GOOGLE_TARGET_PREFLIGHT_FAILED",
                 "Google target Calendar id does not match configuration",
             )
+        return dict(metadata)
 
     def _raw_google_change(self, change: Any) -> Mapping[str, Any] | None:
         raw = getattr(change, "raw", None)
@@ -342,8 +343,11 @@ class BootstrapRunner:
         except (UnsupportedEventError, ValueError) as exc:
             raise _raise_normalization_failure(exc, source="Google") from exc
 
-    def _google_preflight(self) -> tuple[tuple[Any, ...], str]:
-        changes, token = self._google_snapshot()
+    def _google_preflight_snapshot(
+        self,
+        changes: Sequence[Any],
+        token: str,
+    ) -> tuple[tuple[Any, ...], str]:
         managed: dict[str, list[_ManagedGoogleEvent]] = {}
         for change in changes:
             if getattr(change, "change_type", None) is not ChangeType.UPSERT:
@@ -382,6 +386,10 @@ class BootstrapRunner:
                 "Google metadata identifies multiple live events for one TimeTree UUID",
             )
         return changes, token
+
+    def _google_preflight(self) -> tuple[tuple[Any, ...], str]:
+        changes, token = self._google_snapshot()
+        return self._google_preflight_snapshot(changes, token)
 
     def _timetree_preflight(
         self,

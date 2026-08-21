@@ -21,6 +21,7 @@ from bridge.db import ensure_database
 from bridge.google_client import google_event_change
 from bridge.models import GOOGLE_BRIDGE_SYNC_SOURCE, TimeTreeLabelCatalog
 from bridge.repository import StateRepository
+from bridge.timetree_client import TimeTreeCalendar
 
 ROOT = Path(__file__).parents[1]
 FIXTURES = ROOT / "fixtures"
@@ -88,9 +89,22 @@ def google_raw(
 
 
 class FakeTimeTree:
+    calendar_id = "101"
+
     def __init__(self, events: list[dict[str, Any]]) -> None:
         self.events = copy.deepcopy(events)
         self.calls: list[str] = []
+
+    async def list_calendars(self) -> tuple[TimeTreeCalendar, ...]:
+        self.calls.append("list_calendars")
+        return (
+            TimeTreeCalendar(
+                calendar_id=self.calendar_id,
+                name="Fixture Calendar",
+                alias_code=None,
+                users=(),
+            ),
+        )
 
     async def get_calendar_labels(self) -> TimeTreeLabelCatalog:
         self.calls.append("get_calendar_labels")
@@ -119,6 +133,7 @@ class FakeGoogle:
         final_mutator: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         conflict_on_insert: dict[str, Any] | None = None,
         get_error: BaseException | None = None,
+        access_role: str = "writer",
     ) -> None:
         self.events = {
             raw["id"]: copy.deepcopy(raw) for raw in (events or [])
@@ -128,6 +143,7 @@ class FakeGoogle:
         self.final_mutator = final_mutator
         self.conflict_on_insert = copy.deepcopy(conflict_on_insert)
         self.get_error = get_error
+        self.access_role = access_role
         self.list_calls = 0
         self.insert_calls: list[dict[str, Any]] = []
         self.get_calls: list[str] = []
@@ -135,7 +151,11 @@ class FakeGoogle:
         self.next_id = 1
 
     def get_calendar_metadata(self) -> dict[str, str]:
-        return {"id": self.calendar_id, "timeZone": "Asia/Tokyo"}
+        return {
+            "id": self.calendar_id,
+            "timeZone": "Asia/Tokyo",
+            "accessRole": self.access_role,
+        }
 
     def list_changes(self):
         self.list_calls += 1
@@ -154,7 +174,11 @@ class FakeGoogle:
         return type(
             "FakeSyncResult",
             (),
-            {"changes": changes, "next_sync_token": f"token-{self.list_calls}"},
+            {
+                "changes": changes,
+                "next_sync_token": f"token-{self.list_calls}",
+                "access_role": self.access_role,
+            },
         )()
 
     def insert_event(self, body: dict[str, Any]) -> dict[str, Any]:

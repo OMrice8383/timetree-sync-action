@@ -64,6 +64,7 @@ class FullResyncRequired(GoogleClientError):
 class GoogleSyncResult:
     changes: tuple[EventChange, ...]
     next_sync_token: str
+    access_role: str | None = None
 
     def __post_init__(self) -> None:
         if not self.next_sync_token:
@@ -364,6 +365,7 @@ class GoogleCalendarClient:
     def list_changes(self, *, sync_token: str | None = None) -> GoogleSyncResult:
         changes: list[EventChange] = []
         page_token: str | None = None
+        access_role: str | None = None
 
         while True:
             params = self._list_params(sync_token=sync_token, page_token=page_token)
@@ -378,6 +380,18 @@ class GoogleCalendarClient:
 
             if not isinstance(response, Mapping):
                 raise GoogleProtocolError("Google events.list returned a non-object")
+
+            response_access_role = response.get("accessRole")
+            if response_access_role is not None:
+                if not isinstance(response_access_role, str) or not response_access_role:
+                    raise GoogleProtocolError(
+                        "Google events.list accessRole must be a non-empty string"
+                    )
+                if access_role is not None and access_role != response_access_role:
+                    raise GoogleProtocolError(
+                        "Google events.list accessRole changed between pages"
+                    )
+                access_role = response_access_role
 
             raw_items = response.get("items", [])
             if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes)):
@@ -406,7 +420,7 @@ class GoogleCalendarClient:
                 raise GoogleProtocolError(
                     "final Google events.list page is missing nextSyncToken"
                 )
-            return GoogleSyncResult(tuple(changes), next_sync_token)
+            return GoogleSyncResult(tuple(changes), next_sync_token, access_role)
 
     def get_calendar_metadata(self) -> Mapping[str, Any]:
         response = (
