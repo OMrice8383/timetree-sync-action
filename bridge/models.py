@@ -177,6 +177,11 @@ class EventChange:
     parent_source_event_id: str | None = None
     original_start: date | datetime | None = None
     event: NormalizedEvent | None = None
+    # The raw Google object is retained only when a Google client parsed the
+    # change.  Bootstrap needs the private metadata to distinguish a managed
+    # event from an unmanaged event during its preflight.  It is optional so
+    # the existing partial-delete/EventChange API remains unchanged.
+    raw: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         if not self.source_event_id:

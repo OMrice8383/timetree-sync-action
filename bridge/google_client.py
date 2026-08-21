@@ -191,6 +191,7 @@ def google_event_change(
             change_type=ChangeType.UPSERT,
             source_event_id=event.source_event_id,
             event=event,
+            raw=dict(raw),
         )
 
     source_event_id = raw.get("id")
@@ -204,6 +205,7 @@ def google_event_change(
         return EventChange(
             change_type=ChangeType.DELETE,
             source_event_id=source_event_id,
+            raw=dict(raw),
         )
 
     if (
@@ -226,6 +228,7 @@ def google_event_change(
         source_event_id=source_event_id,
         parent_source_event_id=recurring_event_id,
         original_start=original_start,
+        raw=dict(raw),
     )
 
 
@@ -424,6 +427,55 @@ class GoogleCalendarClient:
         if not isinstance(response, Mapping):
             raise GoogleProtocolError("Google events.get returned a non-object")
         return response
+
+    def find_events_by_private_property(
+        self,
+        property_name: str,
+        value: str,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Find live events by private metadata for crash recovery.
+
+        This is deliberately separate from ``list_changes``.  The fixed
+        incremental query contract must not acquire a recovery-only filter.
+        """
+        if not property_name or not value:
+            raise ValueError("private property name and value must not be empty")
+
+        events: list[Mapping[str, Any]] = []
+        page_token: str | None = None
+        while True:
+            params: dict[str, Any] = {
+                "calendarId": self.calendar_id,
+                "privateExtendedProperty": f"{property_name}={value}",
+                "singleEvents": False,
+                "showDeleted": True,
+                "eventTypes": "default",
+                "maxResults": 2500,
+            }
+            if page_token is not None:
+                params["pageToken"] = page_token
+            response = self._service.events().list(**params).execute()
+            if not isinstance(response, Mapping):
+                raise GoogleProtocolError("Google recovery list returned a non-object")
+            raw_items = response.get("items", [])
+            if not isinstance(raw_items, Sequence) or isinstance(
+                raw_items, (str, bytes)
+            ):
+                raise GoogleProtocolError("Google recovery items must be a sequence")
+            for raw in raw_items:
+                if not isinstance(raw, Mapping):
+                    raise GoogleProtocolError("Google recovery item must be an object")
+                if raw.get("status") != "cancelled":
+                    events.append(dict(raw))
+
+            next_page_token = response.get("nextPageToken")
+            if next_page_token is None:
+                return tuple(events)
+            if not isinstance(next_page_token, str) or not next_page_token:
+                raise GoogleProtocolError(
+                    "Google recovery nextPageToken must be a non-empty string"
+                )
+            page_token = next_page_token
 
     def insert_event(self, body: Mapping[str, Any]) -> Mapping[str, Any]:
         response = (
