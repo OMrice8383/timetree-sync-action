@@ -11,8 +11,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-from bridge.adapters import normalize_timetree_event
-from bridge.models import EventKind, NormalizedEvent, Recurrence, Source
+from bridge.adapters import normalize_timetree_event as _normalize_timetree_event
+from bridge.models import (
+    EventKind,
+    NormalizedEvent,
+    Recurrence,
+    Source,
+    TimeTreeLabelCatalog,
+)
 from bridge.timetree_client import (
     TimeTreeMCPClient,
     TimeTreeProtocolError,
@@ -46,6 +52,19 @@ class FakeClient:
     async def call_tool(self, name, arguments):
         self.calls.append((name, arguments))
         return self.responses.pop(0)
+
+
+TEST_LABEL_CATALOG = TimeTreeLabelCatalog.from_mapping(
+    {3: "大河予定", 10: "共通予定"}
+)
+
+
+def normalize_timetree_event(raw: dict, *, default_timezone: str):
+    return _normalize_timetree_event(
+        raw,
+        default_timezone=default_timezone,
+        label_catalog=TEST_LABEL_CATALOG,
+    )
 
 
 def single_event(*, title="Fixture", all_day=False):
@@ -89,6 +108,7 @@ def mcp_read_event(*, uuid="tt-1", updated="2030-01-02T01:00:00.000Z"):
         "all_day": False,
         "category": 1,
         "type": 0,
+        "label_id": 3,
         "recurrences": [],
         "updated_at": updated,
         "created_at": "2030-01-01T00:00:00.000Z",
@@ -197,6 +217,15 @@ class TimeTreeClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_create_update_delete_use_same_uuid(self):
         fake = FakeClient(
             [
+                result(
+                    {
+                        "calendar_id": "123",
+                        "labels": [
+                            {"id": 3, "name": "大河予定"},
+                            {"id": 10, "name": "共通予定"},
+                        ],
+                    }
+                ),
                 result({"success": True, "event": {"uuid": "tt-created"}}),
                 result({"success": True, "event": {"uuid": "tt-created"}}),
                 result({"success": True, "deleted_event_uuid": "tt-created"}),
@@ -210,9 +239,17 @@ class TimeTreeClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(created.event_uuid, "tt-created")
         self.assertEqual(updated.event_uuid, "tt-created")
         self.assertEqual(deleted.event_uuid, "tt-created")
+        self.assertEqual(fake.calls[0][0], "get_calendar_labels")
         self.assertEqual(fake.calls[0][1]["calendar_id"], 123)
-        self.assertEqual(fake.calls[1][1], {"calendar_id": 123, "title": "Updated", "event_uuid": "tt-created"})
-        self.assertEqual(fake.calls[2][1], {"calendar_id": 123, "event_uuid": "tt-created"})
+        self.assertEqual(fake.calls[1][1]["label_id"], 3)
+        self.assertEqual(
+            fake.calls[2][1],
+            {"calendar_id": 123, "title": "Updated", "event_uuid": "tt-created"},
+        )
+        self.assertEqual(
+            fake.calls[3][1],
+            {"calendar_id": 123, "event_uuid": "tt-created"},
+        )
 
     async def test_series_write_is_gated_until_p6(self):
         event = single_event()
@@ -222,7 +259,12 @@ class TimeTreeClientTests(unittest.IsolatedAsyncioTestCase):
             recurrence=Recurrence(("RRULE:FREQ=DAILY",)),
         )
         with self.assertRaises(TimeTreeWriteGateError):
-            timetree_event_body(series, calendar_id="123", default_timezone="Asia/Tokyo")
+            timetree_event_body(
+                series,
+                calendar_id="123",
+                default_timezone="Asia/Tokyo",
+                label_catalog=TEST_LABEL_CATALOG,
+            )
 
     async def test_exception_delete_remains_gated_even_when_series_gate_is_open(self):
         fake = FakeClient([])
@@ -240,7 +282,12 @@ class TimeTreeClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake.calls, [])
 
     def test_all_day_write_uses_inclusive_timetree_end(self):
-        body = timetree_event_body(single_event(all_day=True), calendar_id="123", default_timezone="Asia/Tokyo")
+        body = timetree_event_body(
+            single_event(all_day=True),
+            calendar_id="123",
+            default_timezone="Asia/Tokyo",
+            label_catalog=TEST_LABEL_CATALOG,
+        )
         start = datetime.fromtimestamp(body["start_at"] / 1000, tz=ZoneInfo("UTC"))
         inclusive_end = datetime.fromtimestamp(
             body["end_at"] / 1000,

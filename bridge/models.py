@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
@@ -29,6 +30,10 @@ class ChangeType(str, Enum):
 
 
 SUPPORTED_RECURRENCE_PROPERTIES = frozenset({"RRULE", "EXDATE"})
+DEFAULT_TIMETREE_LABEL_NAME = "大河予定"
+SYNC_TIMETREE_LABEL_NAMES = frozenset({"大河予定", "共通予定"})
+GOOGLE_TIMETREE_LABEL_PROPERTY = "timetree_label_name"
+GOOGLE_BRIDGE_SYNC_SOURCE = "timetree-chatgpt-bridge"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +48,65 @@ class Recurrence:
 
     def __bool__(self) -> bool:
         return bool(self.lines)
+
+
+@dataclass(frozen=True, slots=True)
+class TimeTreeLabel:
+    label_id: int
+    label_name: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class TimeTreeLabelCatalog:
+    labels: tuple[TimeTreeLabel, ...]
+
+    def __post_init__(self) -> None:
+        ids = [label.label_id for label in self.labels]
+        if len(ids) != len(set(ids)):
+            raise ValueError("TimeTree label IDs must be unique")
+
+        names = [
+            label.label_name
+            for label in self.labels
+            if label.label_name is not None
+        ]
+        if len(names) != len(set(names)):
+            raise ValueError("TimeTree label names must be unique")
+
+    @classmethod
+    def from_mapping(cls, labels: Mapping[int, str | None]) -> TimeTreeLabelCatalog:
+        return cls(
+            tuple(
+                TimeTreeLabel(label_id=label_id, label_name=label_name)
+                for label_id, label_name in labels.items()
+            )
+        )
+
+    def label_name_for_id(self, label_id: object) -> str:
+        if isinstance(label_id, bool) or not isinstance(label_id, int):
+            raise TypeError("TimeTree label_id must be an integer")
+        for label in self.labels:
+            if label.label_id == label_id:
+                if not label.label_name:
+                    raise ValueError("TimeTree label name is missing")
+                return label.label_name
+        raise ValueError(f"unknown TimeTree label_id: {label_id!r}")
+
+    def label_id_for_name(self, label_name: str) -> int:
+        for label in self.labels:
+            if label.label_name == label_name:
+                return label.label_id
+        raise ValueError(f"unknown TimeTree label name: {label_name!r}")
+
+    def require_sync_labels(self) -> None:
+        for required_name in SYNC_TIMETREE_LABEL_NAMES:
+            matches = [
+                label for label in self.labels if label.label_name == required_name
+            ]
+            if len(matches) != 1:
+                raise ValueError(
+                    f"TimeTree sync label must resolve exactly once: {required_name!r}"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +127,7 @@ class NormalizedEvent:
     end_timezone: str | None
     description: str | None
     location: str | None
+    label: str = DEFAULT_TIMETREE_LABEL_NAME
 
     recurrence: Recurrence = field(default_factory=Recurrence)
     updated_at: datetime | None = None
@@ -74,6 +139,8 @@ class NormalizedEvent:
             raise ValueError("source_event_id must not be empty")
         if not self.title.strip():
             raise ValueError("title must not be empty")
+        if self.label not in SYNC_TIMETREE_LABEL_NAMES:
+            raise ValueError(f"unsupported normalized TimeTree label: {self.label!r}")
 
         if self.all_day:
             if isinstance(self.start, datetime) or isinstance(self.end, datetime):

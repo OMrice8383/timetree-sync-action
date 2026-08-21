@@ -93,6 +93,8 @@ async def run_probe(args: argparse.Namespace) -> dict[str, bool]:
         if not result["target_calendar_found"]:
             raise RuntimeError("configured TimeTree calendar was not returned by list_calendars")
 
+        label_catalog = await client.get_calendar_labels()
+
         baseline = await client.get_events()
         result["full_read"] = isinstance(baseline, tuple)
 
@@ -112,6 +114,7 @@ async def run_probe(args: argparse.Namespace) -> dict[str, bool]:
             created_normalized = normalize_timetree_event(
                 created_raw,
                 default_timezone=config.default_timezone,
+                label_catalog=label_catalog,
             )
             result["create_read_same_uuid"] = (
                 created_normalized.source_event_id == created_uuid
@@ -140,6 +143,7 @@ async def run_probe(args: argparse.Namespace) -> dict[str, bool]:
             updated_normalized = normalize_timetree_event(
                 updated_raw,
                 default_timezone=config.default_timezone,
+                label_catalog=label_catalog,
             )
             result["update_read"] = (
                 updated_normalized.source_event_id == created_uuid

@@ -433,6 +433,7 @@ class WriteBoundaryTests(unittest.TestCase):
                 "sync_source": "timetree-chatgpt-bridge",
                 "timetree_id": "tt-uuid",
                 "bridge_version": "0.1",
+                "timetree_label_name": "大河予定",
             },
         )
 

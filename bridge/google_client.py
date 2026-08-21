@@ -8,7 +8,13 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .adapters import NormalizationError, UnsupportedEventError, normalize_google_event
-from .models import ChangeType, EventChange, EventKind, NormalizedEvent
+from .models import (
+    GOOGLE_TIMETREE_LABEL_PROPERTY,
+    ChangeType,
+    EventChange,
+    EventKind,
+    NormalizedEvent,
+)
 from .recurrence import RecurrenceContractError, recurrence_lines_for_event
 
 GOOGLE_CALENDAR_SCOPES = ("https://www.googleapis.com/auth/calendar",)
@@ -275,8 +281,9 @@ def google_event_body(
     elif clear_recurrence:
         body["recurrence"] = []
 
-    if private_properties is not None:
-        body["extendedProperties"] = {"private": dict(private_properties)}
+    properties = dict(private_properties or {})
+    properties[GOOGLE_TIMETREE_LABEL_PROPERTY] = event.label
+    body["extendedProperties"] = {"private": properties}
 
     return body
 

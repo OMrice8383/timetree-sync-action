@@ -7,19 +7,35 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from bridge.adapters import normalize_google_event, normalize_timetree_event
+from bridge.adapters import (
+    normalize_google_event,
+)
+from bridge.adapters import (
+    normalize_timetree_event as _normalize_timetree_event,
+)
 from bridge.canonical import (
     canonical_event_dict,
     canonicalize_recurrence,
     event_hash,
 )
-from bridge.models import EventKind, Recurrence
+from bridge.models import EventKind, Recurrence, TimeTreeLabelCatalog
 
 FIXTURES = Path(__file__).parents[1] / "fixtures"
+TEST_LABEL_CATALOG = TimeTreeLabelCatalog.from_mapping(
+    {3: "大河予定", 10: "共通予定"}
+)
 
 
 def fixture(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def normalize_timetree_event(raw: dict, *, default_timezone: str):
+    return _normalize_timetree_event(
+        raw,
+        default_timezone=default_timezone,
+        label_catalog=TEST_LABEL_CATALOG,
+    )
 
 
 def base_event():

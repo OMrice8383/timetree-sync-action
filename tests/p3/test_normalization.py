@@ -12,9 +12,13 @@ from bridge.adapters import (
     TimezoneFallbackWarning,
     UnsupportedEventError,
     classify_google_event,
-    classify_timetree_event,
     normalize_google_event,
-    normalize_timetree_event,
+)
+from bridge.adapters import (
+    classify_timetree_event as _classify_timetree_event,
+)
+from bridge.adapters import (
+    normalize_timetree_event as _normalize_timetree_event,
 )
 from bridge.models import (
     ChangeType,
@@ -22,13 +26,34 @@ from bridge.models import (
     EventClassification,
     EventKind,
     Source,
+    TimeTreeLabelCatalog,
 )
 
 FIXTURES = Path(__file__).parents[1] / "fixtures"
+TEST_LABEL_CATALOG = TimeTreeLabelCatalog.from_mapping(
+    {
+        1: "夢香プライベート予定",
+        3: "大河予定",
+        7: "夢香仕事予定",
+        10: "共通予定",
+    }
+)
 
 
 def fixture(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def classify_timetree_event(raw: dict):
+    return _classify_timetree_event(raw, label_catalog=TEST_LABEL_CATALOG)
+
+
+def normalize_timetree_event(raw: dict, *, default_timezone: str):
+    return _normalize_timetree_event(
+        raw,
+        default_timezone=default_timezone,
+        label_catalog=TEST_LABEL_CATALOG,
+    )
 
 
 class ClassificationTests(unittest.TestCase):
@@ -45,12 +70,24 @@ class ClassificationTests(unittest.TestCase):
             classify_timetree_event(
                 fixture("timetree_birthday.json")
             ).classification,
+            EventClassification.UNSUPPORTED,
+        )
+        birthday = fixture("timetree_birthday.json")
+        birthday["label_id"] = 3
+        self.assertEqual(
+            classify_timetree_event(birthday).classification,
             EventClassification.IGNORE_KNOWN,
         )
         self.assertEqual(
             classify_timetree_event(
                 fixture("timetree_unsupported_type.json")
             ).classification,
+            EventClassification.UNSUPPORTED,
+        )
+        unsupported = fixture("timetree_unsupported_type.json")
+        unsupported["label_id"] = 3
+        self.assertEqual(
+            classify_timetree_event(unsupported).classification,
             EventClassification.UNSUPPORTED,
         )
 

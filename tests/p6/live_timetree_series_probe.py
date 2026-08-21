@@ -143,6 +143,8 @@ async def run_probe(args: argparse.Namespace) -> dict[str, bool]:
         checks["connection"] = True
 
         try:
+            label_catalog = await client.get_calendar_labels()
+
             timed = _timed_series(
                 default_timezone=config.default_timezone,
                 offset_days=21,
@@ -162,6 +164,7 @@ async def run_probe(args: argparse.Namespace) -> dict[str, bool]:
             normalized = normalize_timetree_event(
                 raw,
                 default_timezone=config.default_timezone,
+                label_catalog=label_catalog,
             )
             checks["timed_series_read_roundtrip"] = (
                 normalized.kind is EventKind.SERIES
@@ -190,6 +193,7 @@ async def run_probe(args: argparse.Namespace) -> dict[str, bool]:
             normalized = normalize_timetree_event(
                 raw,
                 default_timezone=config.default_timezone,
+                label_catalog=label_catalog,
             )
             checks["timed_series_rule_update"] = (
                 normalized.kind is EventKind.SERIES
@@ -217,6 +221,7 @@ async def run_probe(args: argparse.Namespace) -> dict[str, bool]:
             normalized = normalize_timetree_event(
                 raw,
                 default_timezone=config.default_timezone,
+                label_catalog=label_catalog,
             )
             checks["recurrence_removal"] = (
                 normalized.kind is EventKind.SINGLE
@@ -271,6 +276,7 @@ async def run_probe(args: argparse.Namespace) -> dict[str, bool]:
             normalized = normalize_timetree_event(
                 raw,
                 default_timezone=config.default_timezone,
+                label_catalog=label_catalog,
             )
             checks["all_day_series_roundtrip"] = (
                 normalized.kind is EventKind.SERIES

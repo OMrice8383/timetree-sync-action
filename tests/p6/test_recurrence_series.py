@@ -9,13 +9,23 @@ from zoneinfo import ZoneInfo
 
 from bridge.adapters import UnsupportedEventError, normalize_google_event
 from bridge.google_client import GoogleClientError, google_event_body
-from bridge.models import EventKind, NormalizedEvent, Recurrence, Source
+from bridge.models import (
+    EventKind,
+    NormalizedEvent,
+    Recurrence,
+    Source,
+    TimeTreeLabelCatalog,
+)
 from bridge.recurrence import RecurrenceContractError, validate_recurrence_lines
 from bridge.timetree_client import (
     TimeTreeMCPClient,
     TimeTreeWriteGateError,
     timetree_event_body,
     timetree_update_body,
+)
+
+TEST_LABEL_CATALOG = TimeTreeLabelCatalog.from_mapping(
+    {3: "大河予定", 10: "共通予定"}
 )
 
 
@@ -304,6 +314,7 @@ class TimeTreeSeriesWriteTests(unittest.IsolatedAsyncioTestCase):
             calendar_id="123",
             default_timezone="Asia/Tokyo",
             allow_recurrence_write=True,
+            label_catalog=TEST_LABEL_CATALOG,
         )
         update_body = timetree_update_body(
             series,
@@ -368,6 +379,7 @@ class TimeTreeSeriesWriteTests(unittest.IsolatedAsyncioTestCase):
             calendar_id="123",
             default_timezone="Asia/Tokyo",
             allow_recurrence_write=True,
+            label_catalog=TEST_LABEL_CATALOG,
         )
         start = datetime.fromtimestamp(
             body["start_at"] / 1000,

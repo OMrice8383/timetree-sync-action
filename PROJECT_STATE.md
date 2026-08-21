@@ -11,7 +11,7 @@ P3 Normalization Core: COMPLETE
 P4 Google Calendar Client: COMPLETE + LIVE E2E  
 P5 TimeTree MCP Client: COMPLETE + LIVE CRUD  
 P6 Recurrence Series Core: COMPLETE + LIVE SERIES E2E  
-P7 Recurrence Exception Contract / Safety Gate: NEXT  
+P7 Recurrence Exception Contract / Safety Gate: COMPLETE + SAFE-STOP
 P8-P15: NOT STARTED
 
 ---
@@ -22,10 +22,10 @@ This file is the current project handoff / state checkpoint.
 
 Canonical design priority:
 
-1. `timetree取得_要件定義_v0.11.md`
-2. `TimeTree取得_基本設計_v0.11.md`
-3. `TimeTree取得_詳細設計_v0.10.md`
-4. `TimeTree取得_実装計画_v0.9.md`
+1. `docs/timetree取得_要件定義_v0.12.md`
+2. `docs/TimeTree取得_基本設計_v0.12.md`
+3. `docs/TimeTree取得_詳細設計_v0.11.md`
+4. `docs/TimeTree取得_実装計画_v0.10.md`
 5. Implementation
 
 If implementation and design appear to disagree:
@@ -37,7 +37,7 @@ If implementation and design appear to disagree:
 
 Current implementation order follows:
 
-`TimeTree取得_実装計画_v0.9.md`
+`docs/TimeTree取得_実装計画_v0.10.md`
 
 ---
 
@@ -924,7 +924,77 @@ This is not a P7 blocker unless a dependency issue directly affects P7 safety or
 
 ---
 
-# P7 — NEXT: Recurrence Exception Contract / Safety Gate
+# P7 — COMPLETE: Recurrence Exception Contract / Safety Gate
+
+## P7 Closure Status — Safe-stop V1
+
+P7 is COMPLETE using a safe-stop contract. V1 does not implement generic
+TimeTree recurrence-exception `original_start` mapping or exception writes.
+
+The following evidence is sufficient to detect recurrence-exception evidence,
+but not to perform a safe generic exception mapping:
+
+- a Series master with exception evidence in its observed RRULE / EXDATE state
+- a related child exposing `parent_id` or `recurring_uuid`
+
+When such evidence is observed, the affected Series is UNSUPPORTED and must
+safe-stop. A child `start_at` is never promoted to `original_start`. EXDATE
+and detached children are never guessed into a one-to-one mapping. The
+confirmed P6 series EXDATE syntax remains unchanged; P7 safe-stop applies to
+exception evidence observed during the live contract check.
+
+### Confirmed TimeTree live evidence
+
+For “この予定のみ編集”:
+
+- the master retained its RRULE and gained an EXDATE for the original slot
+- a distinct detached child was observed
+- the child exposed `parent_id` and `recurring_uuid` related to the master
+- the child `start_at` represented the edited actual start
+- `get_updated_events` returned the master and child
+
+For “この予定のみ削除”:
+
+- the master retained its RRULE and gained an EXDATE for the deleted slot
+- no child was returned
+- `get_updated_events` returned the master
+
+An edited detached child was also observed to survive Series master deletion
+with the same UUID while becoming a standalone Event with:
+
+```text
+parent_id = null
+recurring_uuid = null
+recurrences = []
+```
+
+Master deletion must not assume that a related edited child is deleted.
+Cleanup must track recorded child UUIDs and must not delete an ambiguous
+standalone event by title alone.
+
+### P7 write boundary
+
+Generic TimeTree recurrence-exception create / update / delete remains CLOSED.
+`allow_recurrence_write=True` authorizes only the confirmed P6 Series subset
+and never opens an exception write path. No separate exception-write flag exists.
+
+### P7 Label Contract closure
+
+V1 synchronizes only the exact Label names `大河予定` and `共通予定`.
+TimeTree Label names are resolved at runtime with `get_calendar_labels`;
+numeric `label_id` values are not hardcoded or used as cross-system canonical
+metadata. Other existing Labels are `IGNORE_KNOWN / LABEL_OUT_OF_SCOPE`.
+Missing, unknown, duplicate, or otherwise ambiguous Label resolution is a
+safe-stop. Normalized Event `label` is a semantic name and is included in
+canonical hashing. Google metadata uses
+`extendedProperties.private.timetree_label_name`; unmanaged Google events
+without Label metadata default to `大河予定`, while managed metadata loss does
+not silently fall back. Static tests and the live Label write verification
+passed. Live Test Artifacts were cleaned up.
+
+P7 completion evidence consists of the read-only/live observations above,
+safe-stop implementation and tests, Label Contract implementation, full
+P2-P7 regression, static checks, and final `[P7 TEST]` zero-artifact Read.
 
 ## Goal
 
@@ -981,7 +1051,8 @@ Before enabling exception writes, determine with evidence:
 
 ## P7 Safety Rules
 
-- Keep all current exception write gates CLOSED until the contract is proven.
+- Keep all generic exception write gates CLOSED after P7; V1 provides
+  safe-stop, not generic exception writes.
 - Do not reuse P6 `allow_recurrence_write` as permission for exception writes.
 - Do not infer exception write parameters from read payloads.
 - Do not test against important real events.
@@ -990,10 +1061,11 @@ Before enabling exception writes, determine with evidence:
 - Preserve master identity and original occurrence identity separately.
 - Unknown exception shapes fail safe.
 - A moved occurrence must not be matched only by its new start time.
-- Do not mark P7 complete from manual UI observations alone.
+- P7 completion is based on the combined contract, implementation, tests,
+  live evidence, and cleanup; manual UI observation alone is insufficient.
 - Live observation and product implementation are separate completion conditions.
 
-## P7 Recommended Entry Sequence
+## P7 Entry Sequence (Completed)
 
 1. Re-read recurrence-exception sections of:
    - Requirements
@@ -1029,19 +1101,21 @@ Before enabling exception writes, determine with evidence:
 
 ---
 
-# Immediate Next Action for the Next Chat
+# Handoff After P7
 
-Start with:
+P7 is complete with the safe-stop contract above. P8 remains NOT STARTED and
+must not be started as part of this closure.
+
+The next phase may begin only from an explicit new request after reviewing:
 
 ```text
 Read PROJECT_STATE.md as the canonical current-state handoff.
 P6 is COMPLETE and committed as c3bf348.
 Do not redo P6.
-Begin P7 Recurrence Exception Contract / Safety Gate.
-Keep generic exception writes closed until P7 evidence proves the contract.
+P7 is COMPLETE. Keep generic recurrence exception writes CLOSED.
 ```
 
-Then:
+Historical P7 entry sequence:
 
 1. Verify GitHub `main` contains `c3bf348`.
 2. Re-read canonical design docs for recurrence exceptions.
@@ -1089,7 +1163,7 @@ Latest implementation checkpoint:
 c3bf348 feat: add P6 recurrence series core
 
 Worktree:
-clean
+dirty; unrelated user changes are preserved
 
 Completed:
 P0
@@ -1099,6 +1173,7 @@ P3
 P4 + Google Live E2E
 P5 + TimeTree Live CRUD
 P6 + TimeTree/Google Live Series E2E
+P7 safe-stop contract + Label Contract
 
 Final regression:
 P2 14/14
@@ -1106,15 +1181,19 @@ P3 36/36
 P4 17/17
 P5 14/14
 P6 15/15
-Total 96/96
+P7 19/19
+Total 115/115
 
 Live:
 TimeTree P6 10/10 true
 Google P6 9/9 true
 cleanup true
+TimeTree P7 exception evidence read: safe-stop contract confirmed
+TimeTree Label Contract live write: PASS
+P7 Test Artifact final full read: 0
 
 Next:
-P7 Recurrence Exception Contract / Safety Gate
+P8 — NOT STARTED (do not begin in this closure)
 
 Critical guard:
 P7 generic recurrence exception writes are still CLOSED.

@@ -9,7 +9,12 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .models import EventKind, NormalizedEvent
+from .models import (
+    EventKind,
+    NormalizedEvent,
+    TimeTreeLabel,
+    TimeTreeLabelCatalog,
+)
 from .recurrence import RecurrenceContractError, recurrence_lines_for_event
 
 _ALLOWED_MCP_ENV = frozenset({"TIMETREE_EMAIL", "TIMETREE_PASSWORD"})
@@ -40,6 +45,7 @@ _SUPPORTED_UPDATE_FIELDS = frozenset(
         "end_timezone",
         "description",
         "location",
+        "label",
         "recurrence",
     }
 )
@@ -306,6 +312,8 @@ def timetree_event_body(
     calendar_id: str,
     default_timezone: str,
     allow_recurrence_write: bool = False,
+    label_catalog: TimeTreeLabelCatalog | None = None,
+    include_label: bool = True,
 ) -> dict[str, Any]:
     if event.kind is EventKind.EXCEPTION:
         raise TimeTreeWriteGateError(
@@ -323,6 +331,16 @@ def timetree_event_body(
         "all_day": event.all_day,
         "category": 1,
     }
+
+    if include_label:
+        if label_catalog is None:
+            raise TimeTreeConfigurationError(
+                "TimeTree label catalog is required for create writes"
+            )
+        try:
+            body["label_id"] = label_catalog.label_id_for_name(event.label)
+        except ValueError as exc:
+            raise TimeTreeConfigurationError(str(exc)) from exc
 
     if event.all_day:
         if isinstance(event.start, datetime) or isinstance(event.end, datetime):
@@ -368,6 +386,7 @@ def timetree_update_body(
     calendar_id: str,
     default_timezone: str,
     allow_recurrence_write: bool = False,
+    label_catalog: TimeTreeLabelCatalog | None = None,
 ) -> dict[str, Any]:
     requested = set(fields)
     if not requested:
@@ -395,6 +414,8 @@ def timetree_update_body(
         calendar_id=calendar_id,
         default_timezone=default_timezone,
         allow_recurrence_write=allow_recurrence_write,
+        label_catalog=label_catalog,
+        include_label="label" in requested,
     )
     body: dict[str, Any] = {"calendar_id": full["calendar_id"]}
 
@@ -404,6 +425,8 @@ def timetree_update_body(
         body["note"] = event.description or ""
     if "location" in requested:
         body["location"] = event.location or ""
+    if "label" in requested:
+        body["label_id"] = full["label_id"]
 
     time_fields = {"all_day", "start", "end", "start_timezone", "end_timezone"}
     if "all_day" in requested:
@@ -533,6 +556,56 @@ class TimeTreeMCPClient:
             )
         return tuple(calendars)
 
+    async def get_calendar_labels(self) -> TimeTreeLabelCatalog:
+        payload = await self._call_json(
+            "get_calendar_labels",
+            {"calendar_id": self.calendar_id_int},
+        )
+        result_calendar_id = payload.get("calendar_id")
+        if result_calendar_id is not None and str(result_calendar_id) != self.calendar_id:
+            raise TimeTreeProtocolError(
+                "get_calendar_labels returned unexpected calendar_id "
+                f"{result_calendar_id!r}"
+            )
+
+        raw_labels = payload.get("labels")
+        if not isinstance(raw_labels, Sequence) or isinstance(
+            raw_labels, (str, bytes)
+        ):
+            raise TimeTreeProtocolError(
+                "get_calendar_labels.labels must be a sequence"
+            )
+
+        labels: list[TimeTreeLabel] = []
+        for raw in raw_labels:
+            if not isinstance(raw, Mapping):
+                raise TimeTreeProtocolError(
+                    "get_calendar_labels label must be an object"
+                )
+            label_id = raw.get("id")
+            if isinstance(label_id, bool) or not isinstance(label_id, int):
+                raise TimeTreeProtocolError(
+                    "get_calendar_labels label id must be an integer"
+                )
+            label_name = raw.get("name")
+            if label_name is not None and not isinstance(label_name, str):
+                raise TimeTreeProtocolError(
+                    "get_calendar_labels label name must be a string"
+                )
+            labels.append(
+                TimeTreeLabel(
+                    label_id=label_id,
+                    label_name=label_name or None,
+                )
+            )
+
+        try:
+            catalog = TimeTreeLabelCatalog(tuple(labels))
+            catalog.require_sync_labels()
+        except ValueError as exc:
+            raise TimeTreeProtocolError(str(exc)) from exc
+        return catalog
+
     async def _read_events(
         self,
         tool: str,
@@ -581,11 +654,24 @@ class TimeTreeMCPClient:
         *,
         allow_recurrence_write: bool = False,
     ) -> TimeTreeWriteResult:
+        if event.kind is EventKind.EXCEPTION:
+            raise TimeTreeWriteGateError(
+                "recurrence exception writes are gated until P7 safety gate"
+            )
+        if (
+            (event.kind is EventKind.SERIES or event.recurrence)
+            and not allow_recurrence_write
+        ):
+            raise TimeTreeWriteGateError(
+                "recurrence series writes are gated until P6 Recurrence Series Core"
+            )
+        label_catalog = await self.get_calendar_labels()
         body = timetree_event_body(
             event,
             calendar_id=self.calendar_id,
             default_timezone=self.default_timezone,
             allow_recurrence_write=allow_recurrence_write,
+            label_catalog=label_catalog,
         )
         payload = await self._call_json("create_event", body)
         if payload.get("success") is not True:
@@ -608,12 +694,32 @@ class TimeTreeMCPClient:
     ) -> TimeTreeWriteResult:
         if not event_uuid:
             raise ValueError("event_uuid must not be empty")
+        requested_fields = set(fields)
+        if event.kind is EventKind.EXCEPTION:
+            raise TimeTreeWriteGateError(
+                "recurrence exception writes are gated until P7 safety gate"
+            )
+        if "recurrence" in requested_fields and not allow_recurrence_write:
+            raise TimeTreeWriteGateError(
+                "recurrence writes are gated until P6 Recurrence Series Core"
+            )
+        if (
+            (event.kind is EventKind.SERIES or event.recurrence)
+            and not allow_recurrence_write
+        ):
+            raise TimeTreeWriteGateError(
+                "recurrence series writes are gated until P6 Recurrence Series Core"
+            )
+        label_catalog = (
+            await self.get_calendar_labels() if "label" in requested_fields else None
+        )
         body = timetree_update_body(
             event,
-            fields=fields,
+            fields=requested_fields,
             calendar_id=self.calendar_id,
             default_timezone=self.default_timezone,
             allow_recurrence_write=allow_recurrence_write,
+            label_catalog=label_catalog,
         )
         body["event_uuid"] = event_uuid
         payload = await self._call_json("update_event", body)

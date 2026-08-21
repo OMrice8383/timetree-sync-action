@@ -240,6 +240,7 @@ def canonical_event_dict(event: NormalizedEvent) -> dict[str, Any]:
         "end": _canonical_temporal(event.end),
         "end_timezone": end_timezone,
         "kind": event.kind.value,
+        "label": event.label,
         "location": _normalize_newlines(event.location),
         "original_start": _canonical_temporal(event.original_start),
         "parent_source_event_id": event.parent_source_event_id or "",

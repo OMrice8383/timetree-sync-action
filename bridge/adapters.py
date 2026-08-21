@@ -7,13 +7,18 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .models import (
+    DEFAULT_TIMETREE_LABEL_NAME,
+    GOOGLE_BRIDGE_SYNC_SOURCE,
+    GOOGLE_TIMETREE_LABEL_PROPERTY,
     SUPPORTED_RECURRENCE_PROPERTIES,
+    SYNC_TIMETREE_LABEL_NAMES,
     Eligibility,
     EventClassification,
     EventKind,
     NormalizedEvent,
     Recurrence,
     Source,
+    TimeTreeLabelCatalog,
 )
 from .recurrence import RecurrenceContractError, validate_recurrence_lines
 
@@ -38,7 +43,58 @@ class TimezoneFallbackWarning(UserWarning):
     pass
 
 
-def classify_timetree_event(raw: Mapping[str, Any]) -> Eligibility:
+def _timetree_label_eligibility(
+    raw: Mapping[str, Any],
+    *,
+    label_catalog: TimeTreeLabelCatalog | None,
+) -> tuple[Eligibility, str | None]:
+    if label_catalog is None:
+        return (
+            Eligibility(
+                EventClassification.UNSUPPORTED,
+                "TIMETREE_LABEL_CATALOG_REQUIRED",
+            ),
+            None,
+        )
+
+    label_id = raw.get("label_id")
+    if label_id is None:
+        return (
+            Eligibility(EventClassification.UNSUPPORTED, "TIMETREE_LABEL_MISSING"),
+            None,
+        )
+
+    try:
+        label_name = label_catalog.label_name_for_id(label_id)
+    except (TypeError, ValueError):
+        known_id = any(label.label_id == label_id for label in label_catalog.labels)
+        code = (
+            "TIMETREE_LABEL_NAME_MISSING"
+            if known_id
+            else "TIMETREE_LABEL_UNKNOWN_ID"
+        )
+        return Eligibility(EventClassification.UNSUPPORTED, code), None
+
+    if label_name not in SYNC_TIMETREE_LABEL_NAMES:
+        return (
+            Eligibility(EventClassification.IGNORE_KNOWN, "LABEL_OUT_OF_SCOPE"),
+            label_name,
+        )
+    return Eligibility(EventClassification.SYNC, "TIMETREE_LABEL_IN_SCOPE"), label_name
+
+
+def classify_timetree_event(
+    raw: Mapping[str, Any],
+    *,
+    label_catalog: TimeTreeLabelCatalog | None = None,
+) -> Eligibility:
+    label_eligibility, _ = _timetree_label_eligibility(
+        raw,
+        label_catalog=label_catalog,
+    )
+    if label_eligibility.classification is not EventClassification.SYNC:
+        return label_eligibility
+
     category = raw.get("category")
     event_type = raw.get("type")
 
@@ -181,12 +237,57 @@ def _normalize_recurrence(raw_lines: Any) -> Recurrence:
     return Recurrence(tuple(lines))
 
 
+def _normalize_google_label(raw: Mapping[str, Any]) -> str:
+    extended = raw.get("extendedProperties")
+    if extended is None:
+        return DEFAULT_TIMETREE_LABEL_NAME
+    if not isinstance(extended, Mapping):
+        raise UnsupportedEventError(
+            "UNSUPPORTED_GOOGLE_LABEL_METADATA",
+            "Google extendedProperties must be an object",
+        )
+
+    private = extended.get("private")
+    if private is None:
+        return DEFAULT_TIMETREE_LABEL_NAME
+    if not isinstance(private, Mapping):
+        raise UnsupportedEventError(
+            "UNSUPPORTED_GOOGLE_LABEL_METADATA",
+            "Google private properties must be an object",
+        )
+
+    label_name = private.get(GOOGLE_TIMETREE_LABEL_PROPERTY)
+    managed = private.get("sync_source") == GOOGLE_BRIDGE_SYNC_SOURCE
+    if label_name is None:
+        if managed:
+            raise UnsupportedEventError(
+                "UNSUPPORTED_GOOGLE_LABEL_METADATA",
+                "managed Google event is missing TimeTree label metadata",
+            )
+        return DEFAULT_TIMETREE_LABEL_NAME
+    if not isinstance(label_name, str) or label_name not in SYNC_TIMETREE_LABEL_NAMES:
+        raise UnsupportedEventError(
+            "UNSUPPORTED_GOOGLE_LABEL_METADATA",
+            f"unknown Google TimeTree label metadata: {label_name!r}",
+        )
+    return label_name
+
+
 def normalize_timetree_event(
     raw: Mapping[str, Any],
     *,
     default_timezone: str,
+    label_catalog: TimeTreeLabelCatalog | None = None,
 ) -> NormalizedEvent:
-    _require_sync(classify_timetree_event(raw))
+    eligibility = classify_timetree_event(
+        raw,
+        label_catalog=label_catalog,
+    )
+    _require_sync(eligibility)
+    _, label_name = _timetree_label_eligibility(
+        raw,
+        label_catalog=label_catalog,
+    )
 
     source_event_id = raw.get("uuid")
     if not isinstance(source_event_id, str) or not source_event_id:
@@ -281,6 +382,7 @@ def normalize_timetree_event(
         end_timezone=normalized_end_tz,
         description=raw.get("note") if isinstance(raw.get("note"), str) else None,
         location=raw.get("location") if isinstance(raw.get("location"), str) else None,
+        label=label_name or "",
         recurrence=recurrence,
         updated_at=(
             _from_unix_ms(raw["updated_at"], field_name="updated_at")
@@ -331,6 +433,7 @@ def normalize_google_event(
         raise NormalizationError("Google start/end objects are required")
 
     recurrence = _normalize_recurrence(raw.get("recurrence"))
+    label_name = _normalize_google_label(raw)
 
     start_is_date = "date" in start_raw
     end_is_date = "date" in end_raw
@@ -428,6 +531,7 @@ def normalize_google_event(
             raw.get("description") if isinstance(raw.get("description"), str) else None
         ),
         location=raw.get("location") if isinstance(raw.get("location"), str) else None,
+        label=label_name,
         recurrence=recurrence,
         updated_at=(
             _parse_rfc3339(raw["updated"], field_name="updated")
