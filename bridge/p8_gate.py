@@ -18,6 +18,7 @@ from .bootstrap import (
     BootstrapRunner,
     _managed_timetree_id,
     _private_properties,
+    deterministic_google_event_id,
 )
 from .models import (
     GOOGLE_BRIDGE_SYNC_SOURCE,
@@ -31,6 +32,21 @@ from .repository import StateRepository
 
 GOOGLE_WRITE_ACCESS_ROLES = frozenset({"owner", "writer"})
 _SAFE_RECURRENCE_LINE = re.compile(r"[A-Za-z0-9_+.;=,:/\-]+")
+RECOVERY_OPERATION_STATES = frozenset(
+    {"prepared", "remote_applied", "mapping_saved", "done"}
+)
+DATABASE_GATE_REASONS = frozenset(
+    {
+        "DB_ALREADY_BOOTSTRAPPED",
+        "DB_EVENT_LINKS_PRESENT",
+        "DB_PENDING_OPERATIONS_PRESENT",
+        "DB_FAILED_OPERATIONS_PRESENT",
+        "DB_MANUAL_RECOVERY_REQUIRED",
+        "DB_COMPLETED_OPERATIONS_PRESENT",
+        "DB_SYNC_OPERATIONS_PRESENT",
+        "DB_OPEN_CONFLICTS_PRESENT",
+    }
+)
 
 
 def _append_reason(reasons: list[str], code: str) -> None:
@@ -50,9 +66,22 @@ def database_preflight(repository: StateRepository) -> dict[str, Any]:
     event_link_count = int(
         connection.execute("SELECT COUNT(*) FROM event_links").fetchone()[0]
     )
+    sync_operation_count = int(
+        connection.execute("SELECT COUNT(*) FROM sync_operations").fetchone()[0]
+    )
     pending_operation_count = int(
         connection.execute(
             "SELECT COUNT(*) FROM sync_operations WHERE state NOT IN ('done', 'failed')"
+        ).fetchone()[0]
+    )
+    failed_operation_count = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sync_operations WHERE state = 'failed'"
+        ).fetchone()[0]
+    )
+    done_operation_count = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM sync_operations WHERE state = 'done'"
         ).fetchone()[0]
     )
     open_conflict_count = int(
@@ -64,14 +93,168 @@ def database_preflight(repository: StateRepository) -> dict[str, Any]:
     return {
         "bootstrapped": bootstrapped,
         "event_link_count": event_link_count,
+        "sync_operation_count": sync_operation_count,
         "pending_operation_count": pending_operation_count,
+        "failed_operation_count": failed_operation_count,
+        "done_operation_count": done_operation_count,
+        "manual_recovery_required_count": failed_operation_count,
         "open_conflict_count": open_conflict_count,
         "ready": not (
             bootstrapped
             or event_link_count
-            or pending_operation_count
+            or sync_operation_count
             or open_conflict_count
         ),
+    }
+
+
+def _recovery_mapping_is_expected(
+    link: Mapping[str, Any],
+    *,
+    source_id: str,
+    source_hash: str,
+    event_kind: str,
+) -> bool:
+    try:
+        expected_google_id = deterministic_google_event_id(source_id)
+    except ValueError:
+        return False
+    return (
+        link.get("timetree_event_id") == source_id
+        and link.get("google_event_id") == expected_google_id
+        and link.get("event_kind") == event_kind
+        and link.get("status") == "synced"
+        and link.get("last_synced_hash") == source_hash
+    )
+
+
+def bootstrap_recovery_preflight(
+    repository: StateRepository,
+    eligible_events: Sequence[Any],
+) -> dict[str, Any]:
+    """Validate the narrow local state that P8 Bootstrap can recover safely.
+
+    This deliberately does not change the normal read-only gate.  It is an
+    additional positive check used only by the live wrapper when the ordinary
+    clean-database reasons are present.
+    """
+
+    reasons: list[str] = []
+    if repository.get_sync_state("bridge_bootstrapped_at") is not None:
+        _append_reason(reasons, "DB_RECOVERY_ALREADY_BOOTSTRAPPED")
+    if repository.connection.execute(
+        "SELECT COUNT(*) FROM conflicts WHERE status = 'open'"
+    ).fetchone()[0]:
+        _append_reason(reasons, "DB_RECOVERY_OPEN_CONFLICTS_PRESENT")
+
+    eligible_by_source: dict[str, Any] = {}
+    for item in eligible_events:
+        event = getattr(item, "event", None)
+        source_id = getattr(event, "source_event_id", None)
+        if isinstance(source_id, str) and source_id:
+            eligible_by_source[source_id] = item
+
+    operation_rows = [
+        dict(row)
+        for row in repository.connection.execute(
+            "SELECT * FROM sync_operations ORDER BY operation_id"
+        ).fetchall()
+    ]
+    link_rows = [
+        dict(row)
+        for row in repository.connection.execute(
+            "SELECT * FROM event_links ORDER BY id"
+        ).fetchall()
+    ]
+    operations_by_source: dict[str, dict[str, Any]] = {}
+
+    for operation in operation_rows:
+        operation_id = operation.get("operation_id")
+        source_id = operation.get("source_event_id")
+        state = operation.get("state")
+        valid_id = (
+            isinstance(operation_id, str)
+            and isinstance(source_id, str)
+            and operation_id == BOOTSTRAP_OPERATION_PREFIX + source_id
+        )
+        if not valid_id:
+            _append_reason(reasons, "DB_RECOVERY_FOREIGN_OPERATION")
+            continue
+        if (
+            operation.get("direction") != "timetree_to_google"
+            or operation.get("action") != "create"
+        ):
+            _append_reason(reasons, "DB_RECOVERY_OPERATION_CONTRACT_MISMATCH")
+        if state not in RECOVERY_OPERATION_STATES:
+            if state == "failed":
+                _append_reason(reasons, "NEEDS_MANUAL_RECOVERY")
+            else:
+                _append_reason(reasons, "DB_RECOVERY_UNSAFE_OPERATION_STATE")
+        if source_id not in eligible_by_source:
+            _append_reason(reasons, "DB_RECOVERY_SOURCE_NOT_ELIGIBLE")
+            continue
+
+        item = eligible_by_source[source_id]
+        source_hash = getattr(item, "source_hash", None)
+        if operation.get("source_hash") != source_hash:
+            _append_reason(reasons, "DB_RECOVERY_SOURCE_HASH_MISMATCH")
+        try:
+            expected_google_id = deterministic_google_event_id(source_id)
+        except ValueError:
+            _append_reason(reasons, "DB_RECOVERY_SOURCE_ID_UNSAFE")
+            continue
+        target_id = operation.get("target_event_id")
+        if state in {"remote_applied", "mapping_saved", "done"}:
+            if target_id is None:
+                _append_reason(reasons, "DB_RECOVERY_TARGET_MAPPING_REQUIRED")
+            elif target_id != expected_google_id:
+                _append_reason(reasons, "DB_RECOVERY_TARGET_MAPPING_MISMATCH")
+        elif target_id is not None and target_id != expected_google_id:
+            _append_reason(reasons, "DB_RECOVERY_TARGET_MAPPING_MISMATCH")
+        operations_by_source[source_id] = operation
+
+    links_by_source: dict[str, dict[str, Any]] = {}
+    for link in link_rows:
+        source_id = link.get("timetree_event_id")
+        if not isinstance(source_id, str) or source_id not in eligible_by_source:
+            _append_reason(reasons, "DB_RECOVERY_EVENT_LINK_SOURCE_NOT_ELIGIBLE")
+            continue
+        if source_id in links_by_source:
+            _append_reason(reasons, "DB_RECOVERY_DUPLICATE_EVENT_LINK")
+            continue
+        operation = operations_by_source.get(source_id)
+        if operation is None:
+            _append_reason(reasons, "DB_RECOVERY_EVENT_LINK_OPERATION_MISSING")
+            continue
+        item = eligible_by_source[source_id]
+        if not _recovery_mapping_is_expected(
+            link,
+            source_id=source_id,
+            source_hash=getattr(item, "source_hash", ""),
+            event_kind=item.event.kind.value,
+        ):
+            _append_reason(reasons, "DB_RECOVERY_EVENT_LINK_MAPPING_MISMATCH")
+        links_by_source[source_id] = link
+
+    for source_id, operation in operations_by_source.items():
+        if operation.get("state") not in {"mapping_saved", "done"}:
+            continue
+        item = eligible_by_source[source_id]
+        link = links_by_source.get(source_id)
+        if link is None or not _recovery_mapping_is_expected(
+            link,
+            source_id=source_id,
+            source_hash=getattr(item, "source_hash", ""),
+            event_kind=item.event.kind.value,
+        ):
+            _append_reason(reasons, "DB_RECOVERY_MAPPING_REQUIRED")
+
+    return {
+        "authorized": bool(operation_rows or link_rows) and not reasons,
+        "reasons": reasons,
+        "eligible_event_count": len(eligible_by_source),
+        "operation_count": len(operation_rows),
+        "event_link_count": len(link_rows),
     }
 
 
@@ -352,7 +535,7 @@ async def _timetree_read_preflight(
     *,
     runner: BootstrapRunner,
     timetree_client: Any,
-) -> tuple[dict[str, Any], list[str]]:
+) -> tuple[dict[str, Any], list[str], tuple[Any, ...]]:
     reasons: list[str] = []
     timetree = {
         "connected": False,
@@ -425,6 +608,7 @@ async def _timetree_read_preflight(
     )
     evidence_count = 0
     recurrence_diagnostics: list[dict[str, Any]] = []
+    eligible_events: tuple[Any, ...] = ()
     for raw in raw_events:
         if not isinstance(raw, Mapping):
             unsupported_reasons["UNSAFE_TIMETREE_SNAPSHOT"] += 1
@@ -471,6 +655,7 @@ async def _timetree_read_preflight(
                 raw_events,
                 label_catalog=label_catalog,
             )
+            eligible_events = tuple(eligible)
             eligible_count = len(eligible)
         except Exception as exc:  # noqa: BLE001 - normalization boundary
             code = _error_code(exc, "UNSAFE_TIMETREE_SNAPSHOT")
@@ -488,7 +673,7 @@ async def _timetree_read_preflight(
     for code in unsupported_reasons:
         _append_reason(reasons, code)
 
-    return timetree, reasons
+    return timetree, reasons, eligible_events
 
 
 async def run_read_only_bootstrap_gate(
@@ -513,10 +698,11 @@ async def run_read_only_bootstrap_gate(
         google_client=google_client,
         repository=repository,
     )
-    timetree, timetree_reasons = await _timetree_read_preflight(
+    timetree, timetree_reasons, eligible_events = await _timetree_read_preflight(
         runner=runner,
         timetree_client=timetree_client,
     )
+    recovery = bootstrap_recovery_preflight(repository, eligible_events)
     recurrence_diagnostics = timetree.pop(
         "recurrence_diagnostics",
         {"unsupported_count": 0, "shapes": []},
@@ -529,6 +715,13 @@ async def run_read_only_bootstrap_gate(
         _append_reason(reasons, "DB_EVENT_LINKS_PRESENT")
     if database["pending_operation_count"]:
         _append_reason(reasons, "DB_PENDING_OPERATIONS_PRESENT")
+    if database["failed_operation_count"]:
+        _append_reason(reasons, "DB_FAILED_OPERATIONS_PRESENT")
+        _append_reason(reasons, "DB_MANUAL_RECOVERY_REQUIRED")
+    if database["done_operation_count"]:
+        _append_reason(reasons, "DB_COMPLETED_OPERATIONS_PRESENT")
+    if database["sync_operation_count"]:
+        _append_reason(reasons, "DB_SYNC_OPERATIONS_PRESENT")
     if database["open_conflict_count"]:
         _append_reason(reasons, "DB_OPEN_CONFLICTS_PRESENT")
     for reason in (*google_reasons, *timetree_reasons):
@@ -544,6 +737,7 @@ async def run_read_only_bootstrap_gate(
         "timetree": timetree,
         "recurrence_diagnostics": recurrence_diagnostics,
         "database": database,
+        "recovery": recovery,
         "gate": {
             "ready_for_live_bootstrap": ready,
             "reasons": reasons,

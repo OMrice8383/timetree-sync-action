@@ -4,9 +4,11 @@ import argparse
 import asyncio
 import json
 from collections.abc import Sequence
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from .bootstrap import BootstrapError, BootstrapRunner
 from .config import ConfigError, load_config, load_secrets, secret_presence
 from .db import (
     CORE_TABLES,
@@ -17,8 +19,9 @@ from .db import (
     table_counts,
 )
 from .google_client import GoogleCalendarClient
-from .lock import default_lock_path, inspect_lock
+from .lock import default_lock_path, inspect_lock, run_lock
 from .p8_gate import (
+    DATABASE_GATE_REASONS,
     database_preflight,
     run_external_doctor,
     run_read_only_bootstrap_gate,
@@ -363,6 +366,244 @@ def run_bootstrap_dry_run(
             )
 
 
+async def _run_live_bootstrap_with_clients(
+    *,
+    config: Any,
+    repository: StateRepository,
+    google_client: Any,
+    timetree_client: Any,
+) -> dict[str, Any]:
+    gate = await run_read_only_bootstrap_gate(
+        google_client=google_client,
+        timetree_client=timetree_client,
+        repository=repository,
+        default_timezone=config.default_timezone,
+        bridge_version=config.version,
+    )
+
+    gate_reasons = set(gate["gate"]["reasons"])
+    external_reasons = gate_reasons - DATABASE_GATE_REASONS
+    database = gate["database"]
+    recovery = gate["recovery"]
+    bootstrap_mode: str | None = None
+
+    if database["bootstrapped"]:
+        # BootstrapRunner has an authoritative no-I/O idempotency check.  It
+        # is safe to preserve that result only when the read-only external
+        # gate passed and the local state is not pending/manual recovery.
+        blocked_after_bootstrap = gate_reasons & {
+            "DB_PENDING_OPERATIONS_PRESENT",
+            "DB_FAILED_OPERATIONS_PRESENT",
+            "DB_MANUAL_RECOVERY_REQUIRED",
+            "DB_OPEN_CONFLICTS_PRESENT",
+        }
+        if not external_reasons and not blocked_after_bootstrap:
+            bootstrap_mode = "already_bootstrapped"
+        else:
+            bootstrap_mode = None
+    elif gate["gate"]["ready_for_live_bootstrap"]:
+        bootstrap_mode = "clean"
+    elif (
+        not external_reasons
+        and gate_reasons <= DATABASE_GATE_REASONS
+        and recovery["authorized"]
+    ):
+        bootstrap_mode = "recovery"
+
+    if bootstrap_mode is None:
+        error = "LIVE_BOOTSTRAP_GATE_FAILED"
+        if "NEEDS_MANUAL_RECOVERY" in recovery["reasons"]:
+            error = "BOOTSTRAP_RECOVERY_MANUAL_REQUIRED"
+        return {
+            **gate,
+            "dry_run": False,
+            "remote_writes": 0,
+            "error": error,
+            "message": (
+                "Live Bootstrap was not started because the final "
+                "read-only gate did not pass."
+            ),
+        }
+
+    runner = BootstrapRunner(
+        timetree_client=timetree_client,
+        google_client=google_client,
+        repository=repository,
+        default_timezone=config.default_timezone,
+        bridge_version=config.version,
+        allow_recurrence_write=True,
+    )
+    bootstrap = await runner.run()
+
+    return {
+        "ok": True,
+        "command": "bootstrap",
+        "dry_run": False,
+        "remote_writes": bootstrap.created_event_count,
+        "bootstrap_mode": bootstrap_mode,
+        "gate": gate["gate"],
+        "recovery": recovery,
+        "preflight": {
+            "google": gate["google"],
+            "timetree": gate["timetree"],
+            "recurrence_diagnostics": gate["recurrence_diagnostics"],
+            "database": gate["database"],
+        },
+        "bootstrap": asdict(bootstrap),
+    }
+
+
+def _local_bootstrap_idempotency_result(
+    repository: StateRepository,
+) -> dict[str, Any] | None:
+    """Return the local-only result for an already completed Bootstrap.
+
+    BootstrapRunner performs this same short-circuit before any remote read.
+    The live CLI must make the decision before loading credentials so an
+    already completed local state never needs external service availability.
+    """
+
+    database = database_preflight(repository)
+    if not database["bootstrapped"]:
+        return None
+
+    unsafe_state = (
+        database["pending_operation_count"]
+        or database["failed_operation_count"]
+        or database["open_conflict_count"]
+    )
+    if unsafe_state:
+        return {
+            "ok": False,
+            "command": "bootstrap",
+            "dry_run": False,
+            "remote_writes": 0,
+            "bootstrap_mode": "already_bootstrapped",
+            "error": "BOOTSTRAP_LOCAL_STATE_UNSAFE",
+            "message": (
+                "Bootstrap state is marked complete but has pending, failed, "
+                "or conflicting local state."
+            ),
+            "database": database,
+        }
+
+    return {
+        "ok": True,
+        "command": "bootstrap",
+        "dry_run": False,
+        "remote_writes": 0,
+        "bootstrap_mode": "already_bootstrapped",
+        "database": database,
+        "bootstrap": {
+            "status": "already_bootstrapped",
+            "bootstrap_started_ms": None,
+            "eligible_event_count": 0,
+            "created_event_count": 0,
+            "recovered_event_count": 0,
+            "google_sync_token": repository.get_sync_state("google_sync_token"),
+        },
+    }
+
+
+async def _run_bootstrap_live(
+    *,
+    config: Any,
+    repository: StateRepository,
+    mcp_entrypoint: str | Path | None,
+    node_command: str,
+    google_client: Any | None,
+    timetree_client: Any | None,
+) -> dict[str, Any]:
+    secrets = load_secrets(required=False)
+    missing: list[str] = []
+
+    if google_client is None and not secrets.google_service_account_file:
+        missing.append("GOOGLE_CREDENTIALS_MISSING")
+    if timetree_client is None and (
+        not secrets.timetree_email or not secrets.timetree_password
+    ):
+        missing.append("TIMETREE_CREDENTIALS_MISSING")
+
+    if missing:
+        result = _bootstrap_failure_result(repository, missing)
+        result["dry_run"] = False
+        result["error"] = "LIVE_BOOTSTRAP_CREDENTIALS_MISSING"
+        result["message"] = (
+            "Live Bootstrap was not started because required credentials "
+            "are unavailable."
+        )
+        return result
+
+    if google_client is None:
+        assert secrets.google_service_account_file is not None
+        google_client = GoogleCalendarClient.from_service_account_file(
+            secrets.google_service_account_file,
+            calendar_id=config.google_calendar_id,
+            default_timezone=config.default_timezone,
+        )
+
+    if timetree_client is not None:
+        return await _run_live_bootstrap_with_clients(
+            config=config,
+            repository=repository,
+            google_client=google_client,
+            timetree_client=timetree_client,
+        )
+
+    assert secrets.timetree_email is not None
+    assert secrets.timetree_password is not None
+
+    entrypoint = (
+        Path(mcp_entrypoint)
+        if mcp_entrypoint
+        else _default_mcp_entrypoint(config.project_root)
+    )
+
+    async with TimeTreeMCPClient.connect(
+        mcp_entrypoint=entrypoint,
+        calendar_id=config.timetree_calendar_id,
+        default_timezone=config.default_timezone,
+        env=secrets.mcp_env(),
+        node_command=node_command,
+    ) as connected_timetree:
+        return await _run_live_bootstrap_with_clients(
+            config=config,
+            repository=repository,
+            google_client=google_client,
+            timetree_client=connected_timetree,
+        )
+
+
+def run_bootstrap_live(
+    config_path: str | Path,
+    *,
+    mcp_entrypoint: str | Path | None = None,
+    node_command: str = "node",
+    google_client: Any | None = None,
+    timetree_client: Any | None = None,
+) -> dict[str, Any]:
+    config = load_config(config_path)
+
+    with (
+        run_lock(default_lock_path(config.project_root)),
+        ensure_database(config.database_path) as connection,
+    ):
+        repository = StateRepository(connection)
+        local_result = _local_bootstrap_idempotency_result(repository)
+        if local_result is not None:
+            return local_result
+        return asyncio.run(
+            _run_bootstrap_live(
+                config=config,
+                repository=repository,
+                mcp_entrypoint=mcp_entrypoint,
+                node_command=node_command,
+                google_client=google_client,
+                timetree_client=timetree_client,
+            )
+        )
+
+
 def run_status(config_path: str | Path, *, dry_run: bool = False) -> dict[str, Any]:
     config = load_config(config_path)
     with ensure_database(config.database_path) as connection:
@@ -422,17 +663,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = run_status(args.config, dry_run=args.dry_run)
             exit_code = 0 if result["ok"] else 2
         elif args.command == "bootstrap":
-            if not args.dry_run:
-                result = {
-                    "ok": False,
-                    "command": "bootstrap",
-                    "dry_run": False,
-                    "remote_writes": 0,
-                    "error": "LIVE_BOOTSTRAP_WRITE_DISABLED_P8B",
-                    "message": "P8-B only permits bootstrap --dry-run",
-                }
-            else:
+            if args.dry_run:
                 result = run_bootstrap_dry_run(
+                    args.config,
+                    mcp_entrypoint=args.mcp_entrypoint,
+                    node_command=args.node_command,
+                )
+            else:
+                result = run_bootstrap_live(
                     args.config,
                     mcp_entrypoint=args.mcp_entrypoint,
                     node_command=args.node_command,
@@ -447,6 +685,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             "command": args.command,
             "error": type(exc).__name__,
             "message": str(exc),
+        }
+        exit_code = 2
+    except BootstrapError as exc:
+        result = {
+            "ok": False,
+            "command": args.command,
+            "dry_run": args.dry_run,
+            "error": exc.code,
+            "message": (
+                "Bootstrap stopped safely. Inspect local state before retrying."
+            ),
         }
         exit_code = 2
     except Exception as exc:  # noqa: BLE001 - CLI must fail safely

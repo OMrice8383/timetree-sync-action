@@ -7,6 +7,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from bridge.adapters import (
@@ -14,8 +15,17 @@ from bridge.adapters import (
     classify_timetree_event,
     normalize_timetree_event,
 )
-from bridge.cli import build_parser, main, run_bootstrap_dry_run, run_doctor
+from bridge.bootstrap import deterministic_google_event_id
+from bridge.canonical import event_hash
+from bridge.cli import (
+    build_parser,
+    main,
+    run_bootstrap_dry_run,
+    run_bootstrap_live,
+    run_doctor,
+)
 from bridge.db import ensure_database
+from bridge.lock import RunLockHeldError, default_lock_path, run_lock
 from bridge.models import SYNC_TIMETREE_LABEL_NAMES, TimeTreeLabelCatalog
 from bridge.p8_gate import run_read_only_bootstrap_gate
 from bridge.repository import StateRepository
@@ -27,6 +37,7 @@ from tests.p8.test_bootstrap import (
     read_fixture,
     test_uuid,
     tt_event,
+    tt_normalized,
 )
 
 
@@ -475,7 +486,290 @@ class P8BGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("DB_PENDING_OPERATIONS_PRESENT", result["gate"]["reasons"])
         self.assertEqual(counts["sync_operations"], 1)
 
-    def test_bootstrap_parser_and_live_write_guard(self) -> None:
+    def _seed_bootstrap_operation(
+        self,
+        source: dict[str, object],
+        *,
+        db_path: Path | None = None,
+        operation_id: str | None = None,
+        state: str = "prepared",
+        target_event_id: str | None = None,
+    ) -> str:
+        source_id = str(source["uuid"])
+        operation_id = operation_id or (
+            "bootstrap:timetree_to_google:create:" + source_id
+        )
+        with ensure_database(db_path or self.db_path) as connection:
+            repository = StateRepository(connection)
+            repository.create_operation(
+                operation_id=operation_id,
+                direction="timetree_to_google",
+                action="create",
+                source_event_id=source_id,
+                source_hash=event_hash(tt_normalized(source)),
+            )
+            if state == "failed":
+                repository.mark_manual_recovery(operation_id)
+            elif state in {"remote_applied", "mapping_saved", "done"}:
+                repository.transition_operation(
+                    operation_id,
+                    "remote_applied",
+                    target_event_id=target_event_id,
+                )
+                if state in {"mapping_saved", "done"}:
+                    repository.transition_operation(operation_id, "mapping_saved")
+                if state == "done":
+                    repository.transition_operation(operation_id, "done")
+        return operation_id
+
+    def test_live_bootstrap_recovers_prepared_operation_without_duplicate_create(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = write_config(Path(tmp))
+            source = tt_event()
+            deterministic_id = deterministic_google_event_id(source["uuid"])
+            google = FakeGoogle(
+                [
+                    google_raw(
+                        event_id=deterministic_id,
+                        timetree_id=source["uuid"],
+                        label=tt_normalized(source).label,
+                    )
+                ]
+            )
+            self._seed_bootstrap_operation(
+                source,
+                db_path=Path(tmp) / "state" / "test.db",
+            )
+
+            result = run_bootstrap_live(
+                config,
+                google_client=google,
+                timetree_client=FakeTimeTree([source]),
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["bootstrap_mode"], "recovery")
+            self.assertEqual(result["bootstrap"]["created_event_count"], 0)
+            self.assertEqual(result["bootstrap"]["recovered_event_count"], 1)
+            self.assertEqual(google.insert_calls, [])
+
+    def test_live_bootstrap_recovery_404_creates_exactly_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = write_config(Path(tmp))
+            source = tt_event()
+            self._seed_bootstrap_operation(
+                source,
+                db_path=Path(tmp) / "state" / "test.db",
+            )
+            google = FakeGoogle()
+
+            result = run_bootstrap_live(
+                config,
+                google_client=google,
+                timetree_client=FakeTimeTree([source]),
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["bootstrap_mode"], "recovery")
+            self.assertEqual(result["bootstrap"]["created_event_count"], 1)
+            self.assertEqual(result["bootstrap"]["recovered_event_count"], 0)
+            self.assertEqual(len(google.insert_calls), 1)
+            self.assertEqual(
+                google.insert_calls[0]["id"],
+                deterministic_google_event_id(source["uuid"]),
+            )
+
+    def test_live_bootstrap_already_bootstrapped_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = write_config(root)
+            db_path = root / "state" / "test.db"
+            with ensure_database(db_path) as connection:
+                StateRepository(connection).set_sync_state(
+                    "bridge_bootstrapped_at",
+                    "2040-01-01T00:00:00+00:00",
+                )
+            google = FakeGoogle()
+            timetree = FakeTimeTree([tt_event()])
+
+            unavailable = SimpleNamespace(
+                google_service_account_file=None,
+                timetree_email=None,
+                timetree_password=None,
+            )
+            with patch("bridge.cli.load_secrets", return_value=unavailable) as secrets:
+                result = run_bootstrap_live(
+                    config,
+                    google_client=google,
+                    timetree_client=timetree,
+                )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["bootstrap_mode"], "already_bootstrapped")
+            self.assertEqual(result["bootstrap"]["status"], "already_bootstrapped")
+            self.assertEqual(result["remote_writes"], 0)
+            self.assertEqual(google.insert_calls, [])
+            self.assertEqual(google.list_calls, 0)
+            self.assertEqual(timetree.calls, [])
+            secrets.assert_not_called()
+
+    def test_live_recovery_applied_states_require_target_event_id(self) -> None:
+        for state in ("remote_applied", "mapping_saved", "done"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                config = write_config(root)
+                db_path = root / "state" / "test.db"
+                source = tt_event()
+                normalized = tt_normalized(source)
+                self._seed_bootstrap_operation(
+                    source,
+                    db_path=db_path,
+                    state=state,
+                    target_event_id=None,
+                )
+                if state in {"mapping_saved", "done"}:
+                    with ensure_database(db_path) as connection:
+                        StateRepository(connection).create_event_link(
+                            timetree_event_id=source["uuid"],
+                            google_event_id=deterministic_google_event_id(
+                                source["uuid"]
+                            ),
+                            event_kind=normalized.kind.value,
+                            last_synced_hash=event_hash(normalized),
+                        )
+                google = FakeGoogle()
+
+                result = run_bootstrap_live(
+                    config,
+                    google_client=google,
+                    timetree_client=FakeTimeTree([source]),
+                )
+
+                self.assertFalse(result["ok"])
+                self.assertIn(
+                    "DB_RECOVERY_TARGET_MAPPING_REQUIRED",
+                    result["recovery"]["reasons"],
+                )
+                self.assertFalse(result["recovery"]["authorized"])
+                self.assertEqual(google.insert_calls, [])
+
+    def test_live_recovery_rejects_event_kind_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = write_config(root)
+            db_path = root / "state" / "test.db"
+            source = tt_event()
+            normalized = tt_normalized(source)
+            self._seed_bootstrap_operation(source, db_path=db_path)
+            with ensure_database(db_path) as connection:
+                StateRepository(connection).create_event_link(
+                    timetree_event_id=source["uuid"],
+                    google_event_id=deterministic_google_event_id(source["uuid"]),
+                    event_kind="series",
+                    last_synced_hash=event_hash(normalized),
+                )
+            google = FakeGoogle()
+
+            result = run_bootstrap_live(
+                config,
+                google_client=google,
+                timetree_client=FakeTimeTree([source]),
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertIn(
+                "DB_RECOVERY_EVENT_LINK_MAPPING_MISMATCH",
+                result["recovery"]["reasons"],
+            )
+            self.assertFalse(result["recovery"]["authorized"])
+            self.assertEqual(google.insert_calls, [])
+
+    def test_live_bootstrap_failed_operation_requires_manual_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = write_config(Path(tmp))
+            source = tt_event()
+            self._seed_bootstrap_operation(
+                source,
+                db_path=Path(tmp) / "state" / "test.db",
+                state="failed",
+            )
+            google = FakeGoogle()
+
+            result = run_bootstrap_live(
+                config,
+                google_client=google,
+                timetree_client=FakeTimeTree([source]),
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"], "BOOTSTRAP_RECOVERY_MANUAL_REQUIRED")
+            self.assertIn(
+                "DB_FAILED_OPERATIONS_PRESENT",
+                result["gate"]["reasons"],
+            )
+            self.assertIn(
+                "DB_MANUAL_RECOVERY_REQUIRED",
+                result["gate"]["reasons"],
+            )
+            self.assertIn("NEEDS_MANUAL_RECOVERY", result["recovery"]["reasons"])
+            self.assertEqual(google.insert_calls, [])
+            self.assertEqual(result["database"]["pending_operation_count"], 0)
+            self.assertEqual(result["database"]["failed_operation_count"], 1)
+            self.assertFalse(result["database"]["ready"])
+
+    def test_live_bootstrap_foreign_operation_blocks_before_insert(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = write_config(Path(tmp))
+            source = tt_event()
+            self._seed_bootstrap_operation(
+                source,
+                db_path=Path(tmp) / "state" / "test.db",
+                operation_id="foreign-operation",
+            )
+            google = FakeGoogle()
+
+            result = run_bootstrap_live(
+                config,
+                google_client=google,
+                timetree_client=FakeTimeTree([source]),
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"], "LIVE_BOOTSTRAP_GATE_FAILED")
+            self.assertIn(
+                "DB_RECOVERY_FOREIGN_OPERATION",
+                result["recovery"]["reasons"],
+            )
+            self.assertEqual(google.insert_calls, [])
+
+    def test_live_bootstrap_orphan_operation_blocks_before_insert(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = write_config(Path(tmp))
+            orphan = tt_event(event_id="orphan")
+            current = tt_event(event_id="current")
+            self._seed_bootstrap_operation(
+                orphan,
+                db_path=Path(tmp) / "state" / "test.db",
+            )
+            google = FakeGoogle()
+
+            result = run_bootstrap_live(
+                config,
+                google_client=google,
+                timetree_client=FakeTimeTree([current]),
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"], "LIVE_BOOTSTRAP_GATE_FAILED")
+            self.assertIn(
+                "DB_RECOVERY_SOURCE_NOT_ELIGIBLE",
+                result["recovery"]["reasons"],
+            )
+            self.assertEqual(google.insert_calls, [])
+
+    def test_bootstrap_parser_and_live_dispatch(self) -> None:
         args = build_parser().parse_args(["bootstrap", "--dry-run", "--json"])
         self.assertEqual(args.command, "bootstrap")
         self.assertTrue(args.dry_run)
@@ -483,12 +777,121 @@ class P8BGateTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config = write_config(Path(tmp))
             output = io.StringIO()
-            with contextlib.redirect_stdout(output):
+            expected = {
+                "ok": True,
+                "command": "bootstrap",
+                "dry_run": False,
+                "remote_writes": 1,
+            }
+            with (
+                patch("bridge.cli.run_bootstrap_live", return_value=expected) as live,
+                contextlib.redirect_stdout(output),
+            ):
                 code = main(["bootstrap", "--config", str(config), "--json"])
             result = json.loads(output.getvalue())
-            self.assertEqual(code, 2)
-            self.assertEqual(result["error"], "LIVE_BOOTSTRAP_WRITE_DISABLED_P8B")
+            self.assertEqual(code, 0)
+            self.assertTrue(result["ok"])
+            self.assertFalse(result["dry_run"])
+            self.assertEqual(result["remote_writes"], 1)
+            live.assert_called_once()
+
+    def test_live_bootstrap_with_fakes_rechecks_gate_and_persists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = write_config(Path(tmp))
+            google = FakeGoogle()
+            timetree = FakeTimeTree([tt_event()])
+
+            result = run_bootstrap_live(
+                config,
+                google_client=google,
+                timetree_client=timetree,
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertFalse(result["dry_run"])
+            self.assertEqual(result["remote_writes"], 1)
+            self.assertTrue(result["gate"]["ready_for_live_bootstrap"])
+            self.assertEqual(result["bootstrap"]["status"], "bootstrapped")
+            self.assertEqual(result["bootstrap"]["created_event_count"], 1)
+            self.assertEqual(len(google.insert_calls), 1)
+
+            # The read-only gate runs first, then BootstrapRunner performs
+            # its own authoritative preflight before any write.
+            self.assertEqual(timetree.calls.count("get_events"), 2)
+
+            db_path = Path(tmp) / "state" / "test.db"
+            with ensure_database(db_path) as connection:
+                self.assertEqual(
+                    connection.execute("SELECT COUNT(*) FROM event_links").fetchone()[
+                        0
+                    ],
+                    1,
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM sync_operations"
+                    ).fetchone()[0],
+                    1,
+                )
+                self.assertEqual(
+                    connection.execute("SELECT COUNT(*) FROM sync_state").fetchone()[0],
+                    3,
+                )
+
+            self.assertFalse(default_lock_path(Path(tmp)).exists())
+
+    def test_live_bootstrap_gate_failure_never_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = write_config(Path(tmp))
+            google = FakeGoogle([google_raw(event_id="unmanaged")])
+
+            result = run_bootstrap_live(
+                config,
+                google_client=google,
+                timetree_client=FakeTimeTree([tt_event()]),
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertFalse(result["dry_run"])
             self.assertEqual(result["remote_writes"], 0)
+            self.assertEqual(result["error"], "LIVE_BOOTSTRAP_GATE_FAILED")
+            self.assertIn(
+                "UNMANAGED_GOOGLE_EVENT",
+                result["gate"]["reasons"],
+            )
+            self.assertEqual(google.insert_calls, [])
+
+            db_path = Path(tmp) / "state" / "test.db"
+            with ensure_database(db_path) as connection:
+                self.assertEqual(
+                    connection.execute("SELECT COUNT(*) FROM event_links").fetchone()[
+                        0
+                    ],
+                    0,
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM sync_operations"
+                    ).fetchone()[0],
+                    0,
+                )
+                self.assertEqual(
+                    connection.execute("SELECT COUNT(*) FROM sync_state").fetchone()[0],
+                    0,
+                )
+
+    def test_live_bootstrap_run_lock_blocks_second_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = write_config(root)
+            lock_path = default_lock_path(root)
+
+            with run_lock(lock_path), self.assertRaises(RunLockHeldError):
+                run_bootstrap_live(
+                    config,
+                    google_client=FakeGoogle(),
+                    timetree_client=FakeTimeTree([tt_event()]),
+                )
 
     def test_cli_dry_run_with_fakes_does_not_persist_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
