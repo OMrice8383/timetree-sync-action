@@ -1246,10 +1246,10 @@ Branch:
 main
 
 Latest implementation checkpoint:
-9ee7648 feat: add P8 bootstrap read-only gate
+8df34ed feat: complete P8 bootstrap safety gate and yearly recurrence support
 
 Worktree:
-dirty; P8-B.1 changes are uncommitted
+clean; main synced with origin/main
 
 Completed:
 P0
