@@ -276,10 +276,20 @@ def _normalize_recurrence(raw_lines: Any) -> Recurrence:
     return Recurrence(tuple(lines))
 
 
-def _normalize_google_label(raw: Mapping[str, Any]) -> str:
+def _normalize_google_label(
+    raw: Mapping[str, Any],
+    *,
+    google_new_default: str = DEFAULT_TIMETREE_LABEL_NAME,
+    allow_missing_managed_label: bool = False,
+) -> str:
+    if google_new_default not in SYNC_TIMETREE_LABEL_NAMES:
+        raise UnsupportedEventError(
+            "UNSUPPORTED_GOOGLE_LABEL",
+            f"invalid configured Google default label: {google_new_default!r}",
+        )
     extended = raw.get("extendedProperties")
     if extended is None:
-        return DEFAULT_TIMETREE_LABEL_NAME
+        return google_new_default
     if not isinstance(extended, Mapping):
         raise UnsupportedEventError(
             "UNSUPPORTED_GOOGLE_LABEL_METADATA",
@@ -288,7 +298,7 @@ def _normalize_google_label(raw: Mapping[str, Any]) -> str:
 
     private = extended.get("private")
     if private is None:
-        return DEFAULT_TIMETREE_LABEL_NAME
+        return google_new_default
     if not isinstance(private, Mapping):
         raise UnsupportedEventError(
             "UNSUPPORTED_GOOGLE_LABEL_METADATA",
@@ -299,11 +309,13 @@ def _normalize_google_label(raw: Mapping[str, Any]) -> str:
     managed = private.get("sync_source") == GOOGLE_BRIDGE_SYNC_SOURCE
     if label_name is None:
         if managed:
+            if allow_missing_managed_label:
+                return google_new_default
             raise UnsupportedEventError(
                 "UNSUPPORTED_GOOGLE_LABEL_METADATA",
                 "managed Google event is missing TimeTree label metadata",
             )
-        return DEFAULT_TIMETREE_LABEL_NAME
+        return google_new_default
     if not isinstance(label_name, str) or label_name not in SYNC_TIMETREE_LABEL_NAMES:
         raise UnsupportedEventError(
             "UNSUPPORTED_GOOGLE_LABEL_METADATA",
@@ -456,6 +468,8 @@ def normalize_google_event(
     *,
     source_calendar_id: str,
     default_timezone: str,
+    google_new_default: str = DEFAULT_TIMETREE_LABEL_NAME,
+    allow_missing_managed_label: bool = False,
 ) -> NormalizedEvent:
     _require_sync(classify_google_event(raw))
 
@@ -472,7 +486,11 @@ def normalize_google_event(
         raise NormalizationError("Google start/end objects are required")
 
     recurrence = _normalize_recurrence(raw.get("recurrence"))
-    label_name = _normalize_google_label(raw)
+    label_name = _normalize_google_label(
+        raw,
+        google_new_default=google_new_default,
+        allow_missing_managed_label=allow_missing_managed_label,
+    )
 
     start_is_date = "date" in start_raw
     end_is_date = "date" in end_raw

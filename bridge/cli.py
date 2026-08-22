@@ -27,6 +27,7 @@ from .p8_gate import (
     run_read_only_bootstrap_gate,
 )
 from .repository import StateRepository
+from .sync import GoogleToTimeTreeError, GoogleToTimeTreeRunner
 from .timetree_client import TimeTreeMCPClient
 
 _NOT_IMPLEMENTED = "NOT_IMPLEMENTED_P2_FOUNDATION"
@@ -604,6 +605,153 @@ def run_bootstrap_live(
         )
 
 
+async def _run_google_to_timetree_with_clients(
+    *,
+    config: Any,
+    repository: StateRepository,
+    google_client: Any,
+    timetree_client: Any,
+    command: str,
+) -> dict[str, Any]:
+    runner = GoogleToTimeTreeRunner(
+        google_client=google_client,
+        timetree_client=timetree_client,
+        repository=repository,
+        default_timezone=config.default_timezone,
+        google_new_default_label=config.google_new_default_label,
+        bridge_version=config.version,
+        overlap_seconds=config.timetree_overlap_seconds,
+        allow_recurrence_write=True,
+    )
+    try:
+        result = await runner.run()
+    except GoogleToTimeTreeError as exc:
+        return {
+            "ok": False,
+            "command": command,
+            "dry_run": False,
+            "remote_writes": max(
+                exc.confirmed_remote_writes,
+                runner.confirmed_remote_writes,
+            ),
+            "remote_write_outcome_unknown": (
+                exc.remote_write_outcome_unknown or runner.remote_write_outcome_unknown
+            ),
+            "error": exc.code,
+            "message": str(exc),
+            "google_sync_token_committed": False,
+        }
+    payload = result.as_dict()
+    return {
+        "ok": result.token_committed,
+        "command": command,
+        "dry_run": False,
+        "remote_writes": result.confirmed_remote_writes,
+        "remote_write_outcome_unknown": result.remote_write_outcome_unknown,
+        "google_sync_token_committed": result.token_committed,
+        "sync": payload,
+    }
+
+
+async def _run_google_to_timetree(
+    *,
+    config: Any,
+    repository: StateRepository,
+    mcp_entrypoint: str | Path | None,
+    node_command: str,
+    google_client: Any | None,
+    timetree_client: Any | None,
+    command: str,
+) -> dict[str, Any]:
+    secrets = load_secrets(required=False)
+    missing: list[str] = []
+    if google_client is None and not secrets.google_service_account_file:
+        missing.append("GOOGLE_CREDENTIALS_MISSING")
+    if timetree_client is None and (
+        not secrets.timetree_email or not secrets.timetree_password
+    ):
+        missing.append("TIMETREE_CREDENTIALS_MISSING")
+    if missing:
+        return {
+            "ok": False,
+            "command": command,
+            "dry_run": False,
+            "remote_writes": 0,
+            "remote_write_outcome_unknown": False,
+            "error": "SYNC_CREDENTIALS_MISSING",
+            "reasons": missing,
+        }
+
+    if google_client is None:
+        assert secrets.google_service_account_file is not None
+        google_client = GoogleCalendarClient.from_service_account_file(
+            secrets.google_service_account_file,
+            calendar_id=config.google_calendar_id,
+            default_timezone=config.default_timezone,
+            google_new_default=config.google_new_default_label,
+            allow_missing_managed_label=True,
+        )
+
+    if timetree_client is not None:
+        return await _run_google_to_timetree_with_clients(
+            config=config,
+            repository=repository,
+            google_client=google_client,
+            timetree_client=timetree_client,
+            command=command,
+        )
+
+    assert secrets.timetree_email is not None
+    assert secrets.timetree_password is not None
+    entrypoint = (
+        Path(mcp_entrypoint)
+        if mcp_entrypoint
+        else _default_mcp_entrypoint(config.project_root)
+    )
+    async with TimeTreeMCPClient.connect(
+        mcp_entrypoint=entrypoint,
+        calendar_id=config.timetree_calendar_id,
+        default_timezone=config.default_timezone,
+        env=secrets.mcp_env(),
+        node_command=node_command,
+    ) as connected_timetree:
+        return await _run_google_to_timetree_with_clients(
+            config=config,
+            repository=repository,
+            google_client=google_client,
+            timetree_client=connected_timetree,
+            command=command,
+        )
+
+
+def run_sync(
+    config_path: str | Path,
+    *,
+    mcp_entrypoint: str | Path | None = None,
+    node_command: str = "node",
+    google_client: Any | None = None,
+    timetree_client: Any | None = None,
+    command: str = "sync",
+) -> dict[str, Any]:
+    """Run the P9 Google to TimeTree path under the existing application lock."""
+    config = load_config(config_path)
+    with (
+        run_lock(default_lock_path(config.project_root)),
+        ensure_database(config.database_path) as connection,
+    ):
+        return asyncio.run(
+            _run_google_to_timetree(
+                config=config,
+                repository=StateRepository(connection),
+                mcp_entrypoint=mcp_entrypoint,
+                node_command=node_command,
+                google_client=google_client,
+                timetree_client=timetree_client,
+                command=command,
+            )
+        )
+
+
 def run_status(config_path: str | Path, *, dry_run: bool = False) -> dict[str, Any]:
     config = load_config(config_path)
     with ensure_database(config.database_path) as connection:
@@ -675,6 +823,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     mcp_entrypoint=args.mcp_entrypoint,
                     node_command=args.node_command,
                 )
+            exit_code = 0 if result["ok"] else 2
+        elif args.command in {"sync", "tick"} and not args.dry_run:
+            result = run_sync(
+                args.config,
+                mcp_entrypoint=args.mcp_entrypoint,
+                node_command=args.node_command,
+                command=args.command,
+            )
             exit_code = 0 if result["ok"] else 2
         else:
             result = run_unimplemented(args.command, dry_run=args.dry_run)

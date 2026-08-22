@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .adapters import NormalizationError, UnsupportedEventError, normalize_google_event
 from .models import (
+    DEFAULT_TIMETREE_LABEL_NAME,
     GOOGLE_TIMETREE_LABEL_PROPERTY,
     ChangeType,
     EventChange,
@@ -181,12 +182,16 @@ def google_event_change(
     *,
     source_calendar_id: str,
     default_timezone: str,
+    google_new_default: str = DEFAULT_TIMETREE_LABEL_NAME,
+    allow_missing_managed_label: bool = False,
 ) -> EventChange:
     if raw.get("status") != "cancelled":
         event = normalize_google_event(
             raw,
             source_calendar_id=source_calendar_id,
             default_timezone=default_timezone,
+            google_new_default=google_new_default,
+            allow_missing_managed_label=allow_missing_managed_label,
         )
         return EventChange(
             change_type=ChangeType.UPSERT,
@@ -250,9 +255,7 @@ def google_event_body(
         raise GoogleClientError(
             "recurrence writes are gated until P6 Recurrence Series Core"
         )
-    if clear_recurrence and (
-        event.kind is not EventKind.SINGLE or event.recurrence
-    ):
+    if clear_recurrence and (event.kind is not EventKind.SINGLE or event.recurrence):
         raise GoogleClientError(
             "recurrence removal requires a single event with empty recurrence"
         )
@@ -299,6 +302,8 @@ class GoogleCalendarClient:
         *,
         calendar_id: str,
         default_timezone: str,
+        google_new_default: str = DEFAULT_TIMETREE_LABEL_NAME,
+        allow_missing_managed_label: bool = False,
     ) -> None:
         if not calendar_id:
             raise ValueError("calendar_id must not be empty")
@@ -308,6 +313,8 @@ class GoogleCalendarClient:
         self._service = service
         self.calendar_id = calendar_id
         self.default_timezone = default_timezone
+        self.google_new_default = google_new_default
+        self.allow_missing_managed_label = allow_missing_managed_label
 
     @classmethod
     def from_service_account_file(
@@ -316,6 +323,8 @@ class GoogleCalendarClient:
         *,
         calendar_id: str,
         default_timezone: str,
+        google_new_default: str = DEFAULT_TIMETREE_LABEL_NAME,
+        allow_missing_managed_label: bool = False,
     ) -> GoogleCalendarClient:
         path = Path(service_account_file).expanduser().resolve()
         if not path.is_file():
@@ -343,6 +352,8 @@ class GoogleCalendarClient:
             service,
             calendar_id=calendar_id,
             default_timezone=default_timezone,
+            google_new_default=google_new_default,
+            allow_missing_managed_label=allow_missing_managed_label,
         )
 
     def _list_params(
@@ -358,7 +369,9 @@ class GoogleCalendarClient:
         if page_token is not None:
             params["pageToken"] = page_token
 
-        contract_params = {key: value for key, value in params.items() if key != "calendarId"}
+        contract_params = {
+            key: value for key, value in params.items() if key != "calendarId"
+        }
         validate_google_sync_query(contract_params)
         return params
 
@@ -383,7 +396,10 @@ class GoogleCalendarClient:
 
             response_access_role = response.get("accessRole")
             if response_access_role is not None:
-                if not isinstance(response_access_role, str) or not response_access_role:
+                if (
+                    not isinstance(response_access_role, str)
+                    or not response_access_role
+                ):
                     raise GoogleProtocolError(
                         "Google events.list accessRole must be a non-empty string"
                     )
@@ -394,24 +410,32 @@ class GoogleCalendarClient:
                 access_role = response_access_role
 
             raw_items = response.get("items", [])
-            if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes)):
+            if not isinstance(raw_items, Sequence) or isinstance(
+                raw_items, (str, bytes)
+            ):
                 raise GoogleProtocolError("Google events.list items must be a sequence")
 
             for raw in raw_items:
                 if not isinstance(raw, Mapping):
-                    raise GoogleProtocolError("Google events.list item must be an object")
+                    raise GoogleProtocolError(
+                        "Google events.list item must be an object"
+                    )
                 changes.append(
                     google_event_change(
                         raw,
                         source_calendar_id=self.calendar_id,
                         default_timezone=self.default_timezone,
+                        google_new_default=self.google_new_default,
+                        allow_missing_managed_label=self.allow_missing_managed_label,
                     )
                 )
 
             next_page_token = response.get("nextPageToken")
             if next_page_token is not None:
                 if not isinstance(next_page_token, str) or not next_page_token:
-                    raise GoogleProtocolError("nextPageToken must be a non-empty string")
+                    raise GoogleProtocolError(
+                        "nextPageToken must be a non-empty string"
+                    )
                 page_token = next_page_token
                 continue
 
@@ -423,9 +447,7 @@ class GoogleCalendarClient:
             return GoogleSyncResult(tuple(changes), next_sync_token, access_role)
 
     def get_calendar_metadata(self) -> Mapping[str, Any]:
-        response = (
-            self._service.calendars().get(calendarId=self.calendar_id).execute()
-        )
+        response = self._service.calendars().get(calendarId=self.calendar_id).execute()
         if not isinstance(response, Mapping):
             raise GoogleProtocolError("Google calendars.get returned a non-object")
         return response

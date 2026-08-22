@@ -48,6 +48,7 @@ class BridgeConfig:
     timetree_incremental_interval_seconds: int
     timetree_overlap_seconds: int
     google_calendar_id: str
+    google_new_default_label: str
     google_incremental_interval_seconds: int
     reconcile_interval_seconds: int
     verify_interval_seconds: int
@@ -108,6 +109,15 @@ def load_config(path: str | Path = "config/bridge.toml") -> BridgeConfig:
         else config_path.parent
     )
 
+    labels_data = data.get("labels", {})
+    if not isinstance(labels_data, dict):
+        raise ConfigError("Configuration section must be a table: [labels]")
+    google_new_default_label = labels_data.get("google_new_default", "大河予定")
+    if not isinstance(google_new_default_label, str) or not google_new_default_label:
+        raise ConfigError(
+            "Configuration key must be a non-empty string: [labels].google_new_default"
+        )
+
     return BridgeConfig(
         config_path=config_path,
         project_root=project_root,
@@ -124,6 +134,7 @@ def load_config(path: str | Path = "config/bridge.toml") -> BridgeConfig:
             allow_zero=True,
         ),
         google_calendar_id=str(_required(data, "google", "calendar_id")),
+        google_new_default_label=google_new_default_label,
         google_incremental_interval_seconds=_as_positive_int(
             _required(data, "google", "incremental_interval_seconds"),
             "[google].incremental_interval_seconds",

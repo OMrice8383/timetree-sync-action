@@ -11,6 +11,9 @@ overlap_seconds = 30
 calendar_id = "eb7641a1d9f153b9d1dbbb9b905f9cee056744a38b829f604eded4bfe47a1fe1@group.calendar.google.com"
 incremental_interval_seconds = 60
 
+[labels]
+google_new_default = "大河予定"
+
 [reconcile]
 interval_seconds = 3600
 

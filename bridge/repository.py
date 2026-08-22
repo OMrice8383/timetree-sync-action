@@ -4,6 +4,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
+from .models import EventKind
+
 EVENT_LINK_STATUSES = frozenset(
     {"synced", "conflict", "deleted", "error", "unsupported"}
 )
@@ -62,6 +64,10 @@ class StateRepository:
     ) -> int:
         if status not in EVENT_LINK_STATUSES:
             raise InvalidRepositoryValue(f"Invalid event_links.status: {status}")
+        if event_kind not in {kind.value for kind in EventKind}:
+            raise InvalidRepositoryValue(
+                f"Invalid event_links.event_kind: {event_kind}"
+            )
 
         now = _utc_now()
         with self.connection:
@@ -135,18 +141,29 @@ class StateRepository:
         status: str | None = None,
         last_synced_hash: str | None = None,
         last_synced_at: str | None = None,
+        event_kind: str | None = None,
         deleted_at: str | None = None,
+        clear_deleted_at: bool = False,
     ) -> dict[str, Any]:
         if status is not None and status not in EVENT_LINK_STATUSES:
             raise InvalidRepositoryValue(f"Invalid event_links.status: {status}")
+        if event_kind is not None and event_kind not in {
+            kind.value for kind in EventKind
+        }:
+            raise InvalidRepositoryValue(
+                f"Invalid event_links.event_kind: {event_kind}"
+            )
 
         fields = {
             "status": status,
             "last_synced_hash": last_synced_hash,
             "last_synced_at": last_synced_at,
+            "event_kind": event_kind,
             "deleted_at": deleted_at,
         }
         updates = {key: value for key, value in fields.items() if value is not None}
+        if clear_deleted_at:
+            updates["deleted_at"] = deleted_at
         if not updates:
             existing = self.get_event_link(link_id)
             if existing is None:
@@ -258,6 +275,35 @@ class StateRepository:
             ).fetchone()
         )
 
+    def list_operations(
+        self,
+        *,
+        direction: str | None = None,
+        action: str | None = None,
+        states: frozenset[str] | set[str] | tuple[str, ...] | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if direction is not None:
+            clauses.append("direction = ?")
+            values.append(direction)
+        if action is not None:
+            clauses.append("action = ?")
+            values.append(action)
+        if states is not None:
+            if not states:
+                return ()
+            placeholders = ",".join("?" for _ in states)
+            clauses.append(f"state IN ({placeholders})")
+            values.extend(sorted(states))
+
+        where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        rows = self.connection.execute(
+            f"SELECT * FROM sync_operations {where} ORDER BY created_at, operation_id",
+            values,
+        ).fetchall()
+        return tuple(dict(row) for row in rows)
+
     def transition_operation(
         self,
         operation_id: str,
@@ -279,7 +325,10 @@ class StateRepository:
                 f"Stored sync operation has invalid state: {from_state}"
             )
 
-        if to_state != from_state and to_state not in _ALLOWED_OPERATION_TRANSITIONS[from_state]:
+        if (
+            to_state != from_state
+            and to_state not in _ALLOWED_OPERATION_TRANSITIONS[from_state]
+        ):
             raise OperationTransitionError(
                 f"Unsafe sync operation transition: {from_state} -> {to_state}"
             )
