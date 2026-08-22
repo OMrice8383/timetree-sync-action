@@ -66,9 +66,7 @@ class TimeTreeLabelCatalog:
             raise ValueError("TimeTree label IDs must be unique")
 
         names = [
-            label.label_name
-            for label in self.labels
-            if label.label_name is not None
+            label.label_name for label in self.labels if label.label_name is not None
         ]
         if len(names) != len(set(names)):
             raise ValueError("TimeTree label names must be unique")
@@ -97,6 +95,29 @@ class TimeTreeLabelCatalog:
             if label.label_name == label_name:
                 return label.label_id
         raise ValueError(f"unknown TimeTree label name: {label_name!r}")
+
+    def sync_label_name_for_id(self, label_id: object) -> str | None:
+        """Resolve only the runtime IDs of the two in-scope labels."""
+        if isinstance(label_id, bool) or not isinstance(label_id, int):
+            raise TypeError("TimeTree label_id must be an integer")
+
+        current = next(
+            (label for label in self.labels if label.label_id == label_id),
+            None,
+        )
+        if current is None:
+            return None
+        if current.label_name in SYNC_TIMETREE_LABEL_NAMES:
+            return current.label_name
+
+        named_sync_labels = {
+            label.label_name
+            for label in self.labels
+            if label.label_name in SYNC_TIMETREE_LABEL_NAMES
+        }
+        if named_sync_labels != SYNC_TIMETREE_LABEL_NAMES:
+            raise ValueError("TimeTree label name is missing")
+        return None
 
     def require_sync_labels(self) -> None:
         for required_name in SYNC_TIMETREE_LABEL_NAMES:
@@ -148,9 +169,8 @@ class NormalizedEvent:
             if self.start_timezone is not None or self.end_timezone is not None:
                 raise ValueError("all-day timezones must be None")
         else:
-            if (
-                not isinstance(self.start, datetime)
-                or not isinstance(self.end, datetime)
+            if not isinstance(self.start, datetime) or not isinstance(
+                self.end, datetime
             ):
                 raise ValueError("timed start/end must be datetime values")
             if self.start.tzinfo is None or self.end.tzinfo is None:
@@ -161,9 +181,8 @@ class NormalizedEvent:
         if self.end <= self.start:
             raise ValueError("event end must be after start")
 
-        if (
-            self.kind is EventKind.EXCEPTION
-            and (not self.parent_source_event_id or self.original_start is None)
+        if self.kind is EventKind.EXCEPTION and (
+            not self.parent_source_event_id or self.original_start is None
         ):
             raise ValueError(
                 "exception requires parent_source_event_id and original_start"
@@ -197,9 +216,8 @@ class EventChange:
         if self.event is not None:
             raise ValueError("delete changes must not carry a full event")
 
-        if (
-            self.change_type is ChangeType.RECURRENCE_EXCEPTION_DELETE
-            and (not self.parent_source_event_id or self.original_start is None)
+        if self.change_type is ChangeType.RECURRENCE_EXCEPTION_DELETE and (
+            not self.parent_source_event_id or self.original_start is None
         ):
             raise ValueError(
                 "RECURRENCE_EXCEPTION_DELETE requires parent_source_event_id "

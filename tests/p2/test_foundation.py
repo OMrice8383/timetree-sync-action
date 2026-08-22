@@ -151,7 +151,15 @@ class FoundationTests(unittest.TestCase):
             root = Path(tmp)
             config_path = write_config(root)
 
-            doctor = run_doctor(config_path, dry_run=True)
+            with patch.dict(
+                os.environ,
+                {
+                    "TIMETREE_EMAIL": "fixture@example.invalid",
+                    "TIMETREE_PASSWORD": "fixture-password",
+                    "GOOGLE_SERVICE_ACCOUNT_FILE": "fixture-service-account.json",
+                },
+            ):
+                doctor = run_doctor(config_path, dry_run=True)
             status = run_status(config_path, dry_run=True)
 
             self.assertTrue(doctor["ok"])
@@ -173,7 +181,40 @@ class FoundationTests(unittest.TestCase):
             config_path = write_config(root)
 
             output = io.StringIO()
-            with contextlib.redirect_stdout(output):
+
+            async def fake_external_doctor(**kwargs):
+                return {
+                    "external_services_checked": True,
+                    "timetree": {
+                        "connected": True,
+                        "target_calendar_found": True,
+                        "labels_resolved": True,
+                    },
+                    "google": {
+                        "connected": True,
+                        "target_calendar_found": True,
+                        "full_sync_success": True,
+                        "event_read": True,
+                        "access_role": "writer",
+                        "writer_permission": True,
+                        "next_sync_token_observed": True,
+                    },
+                    "ok": True,
+                    "reasons": [],
+                }
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "TIMETREE_EMAIL": "fixture@example.invalid",
+                        "TIMETREE_PASSWORD": "fixture-password",
+                        "GOOGLE_SERVICE_ACCOUNT_FILE": "fixture-service-account.json",
+                    },
+                ),
+                patch("bridge.cli._run_external_doctor", fake_external_doctor),
+                contextlib.redirect_stdout(output),
+            ):
                 code = main(
                     [
                         "doctor",

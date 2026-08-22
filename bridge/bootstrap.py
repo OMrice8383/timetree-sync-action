@@ -13,6 +13,7 @@ from .adapters import (
     EventEligibilityError,
     UnsupportedEventError,
     classify_timetree_event,
+    has_timetree_exception_evidence,
     normalize_google_event,
     normalize_timetree_event,
 )
@@ -129,12 +130,6 @@ def _managed_timetree_id(raw: Mapping[str, Any]) -> str | None:
     return timetree_id
 
 
-def _recurrence_property_name(line: object) -> str | None:
-    if not isinstance(line, str) or ":" not in line:
-        return None
-    return line.split(":", 1)[0].split(";", 1)[0].strip().upper()
-
-
 def _raise_normalization_failure(exc: BaseException, *, source: str) -> BootstrapError:
     code = getattr(exc, "code", None)
     if not isinstance(code, str) or not code:
@@ -187,9 +182,7 @@ class BootstrapRunner:
                 eligible_event_count=0,
                 created_event_count=0,
                 recovered_event_count=0,
-                google_sync_token=self.repository.get_sync_state(
-                    "google_sync_token"
-                ),
+                google_sync_token=self.repository.get_sync_state("google_sync_token"),
             )
 
         bootstrap_started_ms = self.clock_ms()
@@ -372,8 +365,7 @@ class BootstrapRunner:
             )
 
         self._managed_google = {
-            timetree_id: tuple(events)
-            for timetree_id, events in managed.items()
+            timetree_id: tuple(events) for timetree_id, events in managed.items()
         }
         duplicates = [
             timetree_id
@@ -403,34 +395,14 @@ class BootstrapRunner:
                 "TimeTree full snapshot is not a sequence",
             )
 
-        # This pass is intentionally before normalization.  P6 can parse
-        # EXDATE as a series feature, but P7 evidence makes it unsafe for P8
-        # bootstrap and must stop all writes.
+        eligible: list[_EligibleTimeTreeEvent] = []
+        seen_ids: set[str] = set()
         for raw in raw_events:
             if not isinstance(raw, Mapping):
                 raise BootstrapError(
                     "UNSAFE_TIMETREE_SNAPSHOT",
                     "TimeTree full snapshot item is not an object",
                 )
-            if raw.get("parent_id") is not None or raw.get("recurring_uuid") is not None:
-                raise BootstrapError(
-                    "UNSUPPORTED_RECURRENCE_EXCEPTION",
-                    "TimeTree child recurrence evidence blocks Bootstrap",
-                )
-            recurrences = raw.get("recurrences")
-            if isinstance(recurrences, Sequence) and not isinstance(
-                recurrences, (str, bytes)
-            ):
-                for line in recurrences:
-                    if _recurrence_property_name(line) == "EXDATE":
-                        raise BootstrapError(
-                            "UNSUPPORTED_RECURRENCE_EXCEPTION",
-                            "TimeTree master EXDATE evidence blocks Bootstrap",
-                        )
-
-        eligible: list[_EligibleTimeTreeEvent] = []
-        seen_ids: set[str] = set()
-        for raw in raw_events:
             eligibility = classify_timetree_event(
                 raw,
                 label_catalog=label_catalog,
@@ -441,6 +413,11 @@ class BootstrapRunner:
                 raise BootstrapError(
                     eligibility.code,
                     "TimeTree event classification is unsupported for Bootstrap",
+                )
+            if has_timetree_exception_evidence(raw):
+                raise BootstrapError(
+                    "UNSUPPORTED_RECURRENCE_EXCEPTION",
+                    "TimeTree exception evidence blocks Bootstrap",
                 )
             try:
                 event = normalize_timetree_event(
@@ -633,9 +610,7 @@ class BootstrapRunner:
                 "Google target is missing id",
             )
 
-        expected_target_id = deterministic_google_event_id(
-            item.event.source_event_id
-        )
+        expected_target_id = deterministic_google_event_id(item.event.source_event_id)
         if target_id != expected_target_id:
             self._fail_operation(operation_id, "GOOGLE_DETERMINISTIC_ID_MISMATCH")
             raise BootstrapError(
@@ -777,8 +752,8 @@ class BootstrapRunner:
         if operation["state"] == "done":
             raise BootstrapError(
                 "NEEDS_MANUAL_RECOVERY",
-                    "completed Bootstrap operation has no SQLite mapping",
-                )
+                "completed Bootstrap operation has no SQLite mapping",
+            )
 
         if operation.get("target_event_id") not in (None, deterministic_id):
             self._fail_operation(operation_id, "GOOGLE_DETERMINISTIC_ID_MISMATCH")
@@ -966,7 +941,10 @@ class BootstrapRunner:
                     "BOOTSTRAP_CONSISTENCY_MISMATCH",
                     "SQLite mapping is missing or points to a different Google event",
                 )
-            if link.get("status") != "synced" or link.get("last_synced_hash") != item.source_hash:
+            if (
+                link.get("status") != "synced"
+                or link.get("last_synced_hash") != item.source_hash
+            ):
                 raise BootstrapError(
                     "BOOTSTRAP_CONSISTENCY_MISMATCH",
                     "SQLite mapping hash/status is not committed",

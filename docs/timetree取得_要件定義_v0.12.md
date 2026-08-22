@@ -295,6 +295,14 @@ Label名を一意に解決不能
 → 自動Writeしない
 ```
 
+Calendar Label Catalogに存在するLabel IDが、runtimeで一意解決済みの
+`大河予定` / `共通予定`のどちらのIDにも一致しない場合は、Label名が空または
+`null`であっても、Label名を推測せず`LABEL_OUT_OF_SCOPE`として
+`IGNORE_KNOWN`に分類する。
+
+`label_id`欠落、Catalogに存在しないID、または`大河予定` / `共通予定`自体を
+一意に解決できない場合は`UNSUPPORTED`としてsafe-stopする。
+
 `大河予定`と`共通予定`のどちらかがCalendarから欠落している場合、Bootstrapおよび通常Writeを開始せず診断エラーとする。
 
 Label変更：
@@ -867,8 +875,6 @@ V1では将来拡張を阻害しない構造にするだけで、これらを実
 
 # 24. V1完成条件
 
-# 25. V1完成条件
-
 ## TimeTree
 
 - Calendar一覧取得
@@ -922,3 +928,30 @@ V1では将来拡張を阻害しない構造にするだけで、これらを実
 - Google経由でCreate / Update / Delete可能
 - Notion TaskとCalendarを同時参照可能
 - Calendar予定を考慮したTask日程提案が可能
+
+---
+
+# P6.1 YEARLY Recurrence Extension（2026-08-21）
+
+P6.1で追加するRecurrence Contractは、次の意味上のexact形だけとする。
+
+```text
+all_day = true
+RRULE:FREQ=YEARLY
+```
+
+`INTERVAL`、`COUNT`、`UNTIL`、`BYDAY`、`BYMONTH`、`BYMONTHDAY`、
+`EXDATE`、その他のparameterを伴うYEARLY、timed YEARLY、DAILY / MONTHLY等の
+他のFREQはUnsupportedとする。canonicalizationで省略できる既定値であっても、
+YEARLYのraw RRULEに追加指定があればexact形とはみなさない。
+
+Live Contract Discovery evidence：
+
+- Google: Create / Read / Update / Clear / Restore / Delete / Cleanup = PASS
+- TimeTree: Create / Read / Update / Clear / Restore / Delete / Cleanup = PASS
+- TimeTree UUID維持 = PASS
+- Cleanup後のTest Artifact = 0
+
+このcontractに適合するEventはP8 BootstrapのSYNC candidateとする。Generic
+recurrence exception writeは引き続きCLOSEDであり、P6.1はException contractを
+拡張しない。

@@ -20,7 +20,11 @@ from .models import (
     Source,
     TimeTreeLabelCatalog,
 )
-from .recurrence import RecurrenceContractError, validate_recurrence_lines
+from .recurrence import (
+    RecurrenceContractError,
+    recurrence_property_name,
+    validate_recurrence_lines,
+)
 
 
 class NormalizationError(ValueError):
@@ -65,22 +69,58 @@ def _timetree_label_eligibility(
         )
 
     try:
-        label_name = label_catalog.label_name_for_id(label_id)
-    except (TypeError, ValueError):
-        known_id = any(label.label_id == label_id for label in label_catalog.labels)
-        code = (
-            "TIMETREE_LABEL_NAME_MISSING"
-            if known_id
-            else "TIMETREE_LABEL_UNKNOWN_ID"
+        sync_label_name = label_catalog.sync_label_name_for_id(label_id)
+    except ValueError:
+        return (
+            Eligibility(
+                EventClassification.UNSUPPORTED,
+                "TIMETREE_LABEL_NAME_MISSING",
+            ),
+            None,
         )
-        return Eligibility(EventClassification.UNSUPPORTED, code), None
+    except TypeError:
+        return (
+            Eligibility(
+                EventClassification.UNSUPPORTED,
+                "TIMETREE_LABEL_UNKNOWN_ID",
+            ),
+            None,
+        )
 
-    if label_name not in SYNC_TIMETREE_LABEL_NAMES:
+    if sync_label_name is not None:
+        return (
+            Eligibility(EventClassification.SYNC, "TIMETREE_LABEL_IN_SCOPE"),
+            sync_label_name,
+        )
+
+    known_id = any(label.label_id == label_id for label in label_catalog.labels)
+    if known_id:
         return (
             Eligibility(EventClassification.IGNORE_KNOWN, "LABEL_OUT_OF_SCOPE"),
-            label_name,
+            None,
         )
-    return Eligibility(EventClassification.SYNC, "TIMETREE_LABEL_IN_SCOPE"), label_name
+    return (
+        Eligibility(EventClassification.UNSUPPORTED, "TIMETREE_LABEL_UNKNOWN_ID"),
+        None,
+    )
+
+
+def has_timetree_exception_evidence(raw: Mapping[str, Any]) -> bool:
+    """Return whether a raw TimeTree event carries P7 exception evidence."""
+    if raw.get("parent_id") is not None or raw.get("recurring_uuid") is not None:
+        return True
+    recurrences = raw.get("recurrences")
+    if not isinstance(recurrences, Sequence) or isinstance(recurrences, (str, bytes)):
+        return False
+    for line in recurrences:
+        if not isinstance(line, str):
+            continue
+        try:
+            if recurrence_property_name(line) == "EXDATE":
+                return True
+        except RecurrenceContractError:
+            continue
+    return False
 
 
 def classify_timetree_event(
@@ -88,13 +128,6 @@ def classify_timetree_event(
     *,
     label_catalog: TimeTreeLabelCatalog | None = None,
 ) -> Eligibility:
-    label_eligibility, _ = _timetree_label_eligibility(
-        raw,
-        label_catalog=label_catalog,
-    )
-    if label_eligibility.classification is not EventClassification.SYNC:
-        return label_eligibility
-
     category = raw.get("category")
     event_type = raw.get("type")
 
@@ -102,12 +135,18 @@ def classify_timetree_event(
         return Eligibility(EventClassification.IGNORE_KNOWN, "TIMETREE_BIRTHDAY")
     if category == 2:
         return Eligibility(EventClassification.IGNORE_KNOWN, "TIMETREE_MEMO")
-    if category == 1 and event_type == 0:
-        return Eligibility(EventClassification.SYNC, "TIMETREE_CALENDAR_EVENT")
-    return Eligibility(
-        EventClassification.UNSUPPORTED,
-        f"TIMETREE_CATEGORY_{category}_TYPE_{event_type}",
+    if category != 1 or event_type != 0:
+        return Eligibility(
+            EventClassification.UNSUPPORTED,
+            f"TIMETREE_CATEGORY_{category}_TYPE_{event_type}",
+        )
+    label_eligibility, _ = _timetree_label_eligibility(
+        raw,
+        label_catalog=label_catalog,
     )
+    if label_eligibility.classification is EventClassification.SYNC:
+        return Eligibility(EventClassification.SYNC, "TIMETREE_CALENDAR_EVENT")
+    return label_eligibility
 
 
 def classify_google_event(raw: Mapping[str, Any]) -> Eligibility:

@@ -67,10 +67,8 @@ class ClassificationTests(unittest.TestCase):
             EventClassification.IGNORE_KNOWN,
         )
         self.assertEqual(
-            classify_timetree_event(
-                fixture("timetree_birthday.json")
-            ).classification,
-            EventClassification.UNSUPPORTED,
+            classify_timetree_event(fixture("timetree_birthday.json")).classification,
+            EventClassification.IGNORE_KNOWN,
         )
         birthday = fixture("timetree_birthday.json")
         birthday["label_id"] = 3
@@ -89,6 +87,28 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(
             classify_timetree_event(unsupported).classification,
             EventClassification.UNSUPPORTED,
+        )
+
+    def test_timetree_classification_precedes_label_scope(self) -> None:
+        memo = fixture("timetree_memo.json")
+        memo.pop("label_id", None)
+        self.assertEqual(
+            classify_timetree_event(memo).code,
+            "TIMETREE_MEMO",
+        )
+
+        unknown = fixture("timetree_unsupported_type.json")
+        unknown.pop("label_id", None)
+        self.assertEqual(
+            classify_timetree_event(unknown).code,
+            "TIMETREE_CATEGORY_1_TYPE_999",
+        )
+
+        normal = fixture("timetree_single.json")
+        normal.pop("label_id", None)
+        self.assertEqual(
+            classify_timetree_event(normal).code,
+            "TIMETREE_LABEL_MISSING",
         )
 
     def test_google_empty_title_and_special_event_are_unsupported(self) -> None:
@@ -151,7 +171,6 @@ class TimeTreeNormalizationTests(unittest.TestCase):
         self.assertEqual(event.start, date(2029, 12, 31))
         self.assertEqual(event.end, date(2030, 1, 1))
 
-
     def test_both_missing_timezones_use_default_independently(self) -> None:
         raw = fixture("timetree_timezone_missing_start.json")
         raw["end_timezone"] = None
@@ -178,7 +197,6 @@ class TimeTreeNormalizationTests(unittest.TestCase):
         event = normalize_timetree_event(raw, default_timezone="Asia/Tokyo")
         self.assertIsNotNone(event.updated_at)
         self.assertIsNotNone(event.updated_at.tzinfo)
-
 
     def test_timetree_all_day_requires_boolean(self) -> None:
         raw = fixture("timetree_all_day.json")
@@ -234,7 +252,6 @@ class GoogleNormalizationTests(unittest.TestCase):
                 default_timezone="America/Los_Angeles",
             )
         self.assertEqual(caught.exception.code, "UNSUPPORTED_GOOGLE_TIMEZONE")
-
 
     def test_google_offset_only_handles_dst_boundary(self) -> None:
         raw = fixture("google_offset_only.json")
@@ -297,7 +314,6 @@ class GoogleNormalizationTests(unittest.TestCase):
                 default_timezone="Asia/Tokyo",
             )
         self.assertEqual(caught.exception.code, "UNSUPPORTED_RECURRENCE_TIMEZONE")
-
 
     def test_exdate_is_enabled_by_confirmed_p1_contract(self) -> None:
         raw = fixture("google_recurrence.json")

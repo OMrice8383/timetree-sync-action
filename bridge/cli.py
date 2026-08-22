@@ -124,8 +124,10 @@ async def _run_external_doctor(
         result["ok"] = not result["reasons"]
         return result
 
-    entrypoint = Path(mcp_entrypoint) if mcp_entrypoint else _default_mcp_entrypoint(
-        config.project_root
+    entrypoint = (
+        Path(mcp_entrypoint)
+        if mcp_entrypoint
+        else _default_mcp_entrypoint(config.project_root)
     )
     async with TimeTreeMCPClient.connect(
         mcp_entrypoint=entrypoint,
@@ -163,12 +165,13 @@ def run_doctor(
             "sqlite": set(tables) == set(CORE_TABLES),
             "timetree_credentials": bool(
                 presence["TIMETREE_EMAIL"] and presence["TIMETREE_PASSWORD"]
-            ) or timetree_client is not None,
+            )
+            or timetree_client is not None,
             "google_credentials": presence["GOOGLE_SERVICE_ACCOUNT_FILE"]
             or google_client is not None,
         }
         result: dict[str, Any] = {
-            "ok": required_checks["sqlite"],
+            "ok": all(required_checks.values()),
             "command": "doctor",
             "external_services_checked": external,
             "dry_run": dry_run,
@@ -239,8 +242,18 @@ def _bootstrap_failure_result(
             "raw_event_count": 0,
             "eligible_count": 0,
             "ignored_count": 0,
+            "ignored_reasons": {
+                "TIMETREE_BIRTHDAY": 0,
+                "TIMETREE_MEMO": 0,
+                "LABEL_OUT_OF_SCOPE": 0,
+            },
             "unsupported_count": 0,
             "exception_evidence_count": 0,
+            "unsupported_reasons": {},
+        },
+        "recurrence_diagnostics": {
+            "unsupported_count": 0,
+            "shapes": [],
         },
         "database": database,
         "gate": {
@@ -299,8 +312,10 @@ async def _run_bootstrap_dry_run(
     if not secrets.timetree_email or not secrets.timetree_password:
         return _bootstrap_failure_result(repository, missing)
 
-    entrypoint = Path(mcp_entrypoint) if mcp_entrypoint else _default_mcp_entrypoint(
-        config.project_root
+    entrypoint = (
+        Path(mcp_entrypoint)
+        if mcp_entrypoint
+        else _default_mcp_entrypoint(config.project_root)
     )
     async with TimeTreeMCPClient.connect(
         mcp_entrypoint=entrypoint,
@@ -398,7 +413,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = run_doctor(
                 args.config,
                 dry_run=args.dry_run,
-                external=not args.dry_run,
+                external=True,
                 mcp_entrypoint=args.mcp_entrypoint,
                 node_command=args.node_command,
             )

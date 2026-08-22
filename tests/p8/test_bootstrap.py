@@ -135,9 +135,7 @@ class FakeGoogle:
         get_error: BaseException | None = None,
         access_role: str = "writer",
     ) -> None:
-        self.events = {
-            raw["id"]: copy.deepcopy(raw) for raw in (events or [])
-        }
+        self.events = {raw["id"]: copy.deepcopy(raw) for raw in (events or [])}
         self.tombstones = copy.deepcopy(tombstones or [])
         self.response_mutator = response_mutator
         self.final_mutator = final_mutator
@@ -215,9 +213,7 @@ class FakeGoogle:
         return tuple(
             copy.deepcopy(raw)
             for raw in self.events.values()
-            if raw.get("extendedProperties", {})
-            .get("private", {})
-            .get(property_name)
+            if raw.get("extendedProperties", {}).get("private", {}).get(property_name)
             == value
         )
 
@@ -311,6 +307,25 @@ class BootstrapTests(unittest.IsolatedAsyncioTestCase):
             ["RRULE:BYDAY=TU;COUNT=3;FREQ=WEEKLY"],
         )
 
+    async def test_supported_all_day_yearly_series_creates(self) -> None:
+        source = read_fixture("timetree_birthday.json")
+        source.update(
+            {
+                "uuid": test_uuid("p8-yearly-bootstrap"),
+                "id": test_uuid("p8-yearly-bootstrap"),
+                "category": 1,
+                "type": 0,
+                "label_id": 10,
+                "title": "Fixture yearly bootstrap",
+            }
+        )
+        result, google, _, _, _ = await self.run_bootstrap([source])
+        self.assertEqual(result.created_event_count, 1)
+        self.assertEqual(
+            google.insert_calls[0]["recurrence"],
+            ["RRULE:FREQ=YEARLY"],
+        )
+
     async def test_known_ignored_events_are_skipped_without_remote_write(self) -> None:
         memo = tt_event(label_id=10, event_id="memo")
         memo["category"] = 2
@@ -370,14 +385,14 @@ class BootstrapTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_delete_tombstone_does_not_block_empty_preflight(self) -> None:
-        google = FakeGoogle(
-            tombstones=[{"id": "deleted", "status": "cancelled"}]
-        )
+        google = FakeGoogle(tombstones=[{"id": "deleted", "status": "cancelled"}])
         result, google, _, _, _ = await self.run_bootstrap([tt_event()], google)
         self.assertEqual(result.created_event_count, 1)
         self.assertEqual(len(google.insert_calls), 1)
 
-    async def test_remote_applied_operation_recovers_without_duplicate_create(self) -> None:
+    async def test_remote_applied_operation_recovers_without_duplicate_create(
+        self,
+    ) -> None:
         source = tt_event()
         normalized = tt_normalized(source)
         deterministic_id = deterministic_google_event_id(source["uuid"])
@@ -390,9 +405,7 @@ class BootstrapTests(unittest.IsolatedAsyncioTestCase):
         with ensure_database(self.db_path) as connection:
             repo = StateRepository(connection)
             repo.create_operation(
-                operation_id=(
-                    "bootstrap:timetree_to_google:create:" + source["uuid"]
-                ),
+                operation_id=("bootstrap:timetree_to_google:create:" + source["uuid"]),
                 direction="timetree_to_google",
                 action="create",
                 source_event_id=source["uuid"],
@@ -412,13 +425,13 @@ class BootstrapTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dict(operations[0])["state"], "done")
         self.assertIsNotNone(state["bridge_bootstrapped_at"])
 
-    async def test_prepared_operation_with_zero_recovery_matches_creates_once(self) -> None:
+    async def test_prepared_operation_with_zero_recovery_matches_creates_once(
+        self,
+    ) -> None:
         source = tt_event()
         with ensure_database(self.db_path) as connection:
             StateRepository(connection).create_operation(
-                operation_id=(
-                    "bootstrap:timetree_to_google:create:" + source["uuid"]
-                ),
+                operation_id=("bootstrap:timetree_to_google:create:" + source["uuid"]),
                 direction="timetree_to_google",
                 action="create",
                 source_event_id=source["uuid"],
@@ -581,9 +594,7 @@ class BootstrapTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_response_hash_mismatch_does_not_commit(self) -> None:
-        google = FakeGoogle(
-            response_mutator=lambda raw: {**raw, "summary": "wrong"}
-        )
+        google = FakeGoogle(response_mutator=lambda raw: {**raw, "summary": "wrong"})
         await self.assert_aborts_without_write(
             [tt_event()],
             code="GOOGLE_TARGET_HASH_MISMATCH",
@@ -616,7 +627,9 @@ class BootstrapTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state["timetree_updated_after_ms"], "123456")
         self.assertNotEqual(state["timetree_updated_after_ms"], "1262304000000")
 
-    async def test_already_bootstrapped_is_idempotent_without_remote_calls(self) -> None:
+    async def test_already_bootstrapped_is_idempotent_without_remote_calls(
+        self,
+    ) -> None:
         source = tt_event()
         timetree = FakeTimeTree([source])
         google = FakeGoogle()
@@ -647,22 +660,28 @@ class BootstrapTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(private["timetree_id"], source["uuid"])
                 self.assertEqual(private["timetree_label_name"], label_name)
 
-    async def test_missing_or_inconsistent_google_metadata_fails_consistency(self) -> None:
+    async def test_missing_or_inconsistent_google_metadata_fails_consistency(
+        self,
+    ) -> None:
         cases = (
             lambda raw: {
                 **raw,
-                "extendedProperties": {"private": {
-                    "sync_source": GOOGLE_BRIDGE_SYNC_SOURCE,
-                    "timetree_label_name": "大河予定",
-                }},
+                "extendedProperties": {
+                    "private": {
+                        "sync_source": GOOGLE_BRIDGE_SYNC_SOURCE,
+                        "timetree_label_name": "大河予定",
+                    }
+                },
             },
             lambda raw: {
                 **raw,
-                "extendedProperties": {"private": {
-                    "sync_source": GOOGLE_BRIDGE_SYNC_SOURCE,
-                    "timetree_id": "wrong-id",
-                    "timetree_label_name": "大河予定",
-                }},
+                "extendedProperties": {
+                    "private": {
+                        "sync_source": GOOGLE_BRIDGE_SYNC_SOURCE,
+                        "timetree_id": "wrong-id",
+                        "timetree_label_name": "大河予定",
+                    }
+                },
             },
         )
         for index, mutate in enumerate(cases):
@@ -670,9 +689,7 @@ class BootstrapTests(unittest.IsolatedAsyncioTestCase):
                 self.db_path = Path(self.tmp.name) / f"state-metadata-{index}.db"
                 await self.assert_aborts_without_write(
                     [tt_event()],
-                    code=(
-                        "BOOTSTRAP_CONSISTENCY_MISMATCH"
-                    ),
+                    code=("BOOTSTRAP_CONSISTENCY_MISMATCH"),
                     expected_writes=1,
                     google=FakeGoogle(final_mutator=mutate),
                 )

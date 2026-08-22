@@ -27,7 +27,22 @@ def recurrence_property_name(line: str) -> str:
 
 def _rrule_entries(line: str) -> dict[str, str]:
     _, body = line.split(":", 1)
-    return dict(part.split("=", 1) for part in body.split(";") if part)
+    entries: dict[str, str] = {}
+    for raw_part in body.split(";"):
+        part = raw_part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            raise RecurrenceContractError(f"invalid RRULE component: {part!r}")
+        raw_key, raw_value = part.split("=", 1)
+        key = raw_key.strip().upper()
+        value = raw_value.strip()
+        if not key or not value:
+            raise RecurrenceContractError(f"invalid RRULE component: {part!r}")
+        if key in entries:
+            raise RecurrenceContractError(f"duplicate RRULE key: {key}")
+        entries[key] = value.upper() if key == "FREQ" else value
+    return entries
 
 
 def _validate_compact_date(value: str, *, field_name: str) -> None:
@@ -64,7 +79,19 @@ def _validate_rrule(line: str, *, all_day: bool) -> None:
         names = ", ".join(sorted(unexpected))
         raise RecurrenceContractError(f"unsupported P6 RRULE keys: {names}")
 
-    if entries.get("FREQ") != "WEEKLY":
+    frequency = entries.get("FREQ")
+    if frequency == "YEARLY":
+        if not all_day:
+            raise RecurrenceContractError(
+                "P6 YEARLY RRULE is supported only for all-day series"
+            )
+        if set(entries) != {"FREQ"}:
+            raise RecurrenceContractError(
+                "P6 YEARLY RRULE supports no additional parameters"
+            )
+        return
+
+    if frequency != "WEEKLY":
         raise RecurrenceContractError("P6 writable RRULE requires FREQ=WEEKLY")
 
     for key in ("INTERVAL", "COUNT"):
@@ -150,12 +177,32 @@ def validate_recurrence_lines(
     # Validate raw EXDATE context before canonicalization. Timed EXDATE
     # canonicalization intentionally converts TZID forms to UTC, which would
     # otherwise erase evidence of a mismatched effective series timezone.
+    yearly_rrule = False
     for line in lines:
-        if recurrence_property_name(line) == "EXDATE":
+        property_name = recurrence_property_name(line)
+        if property_name == "RRULE":
+            raw_entries = _rrule_entries(line)
+            if raw_entries.get("FREQ") == "YEARLY":
+                yearly_rrule = True
+                if set(raw_entries) != {"FREQ"}:
+                    raise RecurrenceContractError(
+                        "P6 YEARLY RRULE supports no additional parameters"
+                    )
+        elif property_name == "EXDATE":
             _validate_exdate(
                 line,
                 all_day=all_day,
                 timezone=timezone,
+            )
+
+    if yearly_rrule:
+        if not all_day:
+            raise RecurrenceContractError(
+                "P6 YEARLY RRULE is supported only for all-day series"
+            )
+        if len(lines) != 1:
+            raise RecurrenceContractError(
+                "P6 YEARLY recurrence requires exactly RRULE:FREQ=YEARLY"
             )
 
     try:
@@ -169,9 +216,7 @@ def validate_recurrence_lines(
         names = ", ".join(sorted(unsupported))
         raise RecurrenceContractError(f"unsupported recurrence properties: {names}")
     if properties.count("RRULE") != 1:
-        raise RecurrenceContractError(
-            "P6 recurrence series requires exactly one RRULE"
-        )
+        raise RecurrenceContractError("P6 recurrence series requires exactly one RRULE")
 
     for line, property_name in zip(canonical, properties, strict=True):
         if property_name == "RRULE":
@@ -195,10 +240,7 @@ def recurrence_lines_for_event(event: NormalizedEvent) -> tuple[str, ...]:
         raise RecurrenceContractError(
             "event carrying recurrence rules must have kind=series"
         )
-    if (
-        not event.all_day
-        and event.start_timezone != event.end_timezone
-    ):
+    if not event.all_day and event.start_timezone != event.end_timezone:
         raise RecurrenceContractError(
             "recurring series requires matching effective start/end timezones"
         )

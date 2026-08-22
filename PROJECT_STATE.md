@@ -12,7 +12,8 @@ P4 Google Calendar Client: COMPLETE + LIVE E2E
 P5 TimeTree MCP Client: COMPLETE + LIVE CRUD  
 P6 Recurrence Series Core: COMPLETE + LIVE SERIES E2E  
 P7 Recurrence Exception Contract / Safety Gate: COMPLETE + SAFE-STOP
-P8-P15: NOT STARTED
+P8: IN PROGRESS
+P9-P15: NOT STARTED
 
 ---
 
@@ -354,8 +355,32 @@ Rules:
 - Timed `UNTIL` uses UTC compact datetime.
 - All-day `UNTIL` uses compact date.
 - Unknown RRULE keys fail safe.
-- Non-weekly recurrence currently fails safe.
+- The P6.1 exception to the non-weekly rule is exact all-day `RRULE:FREQ=YEARLY`.
+- Timed YEARLY and every parameterized / EXDATE YEARLY variant fail safe.
+- DAILY, MONTHLY, and other non-weekly recurrence shapes fail safe.
 - Do not broaden this subset without explicit contract evidence.
+
+## P6.1 Confirmed Writable Series Extension
+
+Live-confirmed and enabled:
+
+```text
+all_day = true
+RRULE:FREQ=YEARLY
+```
+
+The YEARLY rule must contain no additional parameter and must be the only
+recurrence line. This includes rejecting a raw `INTERVAL=1` that a generic
+canonicalizer might otherwise omit. Timed YEARLY, YEARLY with `INTERVAL`,
+`COUNT`, `UNTIL`, `BYDAY`, `BYMONTH`, `BYMONTHDAY`, `EXDATE`, or any other
+parameter remain unsupported.
+
+Live evidence supplied by the completed Contract Discovery:
+
+- Google Create / Read / Update / Clear / Restore / Delete / Cleanup: PASS
+- TimeTree Create / Read / Update / Clear / Restore / Delete / Cleanup: PASS
+- TimeTree UUID preserved through title update: PASS
+- Cleanup zero: PASS
 
 ## EXDATE
 
@@ -411,7 +436,9 @@ Still unsupported / fail-safe:
 
 - `RDATE`
 - `EXRULE`
-- non-weekly RRULE
+- timed YEARLY RRULE
+- parameterized or EXDATE YEARLY RRULE
+- DAILY, MONTHLY, and other non-weekly RRULE
 - unknown RRULE keys
 - unconfirmed recurrence syntax
 
@@ -1103,8 +1130,8 @@ Before enabling exception writes, determine with evidence:
 
 # Handoff After P7
 
-P7 is complete with the safe-stop contract above. P8 remains NOT STARTED and
-must not be started as part of this closure.
+P7 is complete with the safe-stop contract above. P8 is now in progress under
+the explicit P8-A through P8-B.1 scope below.
 
 The next phase may begin only from an explicit new request after reviewing:
 
@@ -1129,6 +1156,65 @@ Historical P7 entry sequence:
    - confidence / evidence
 5. Design P7 read-only fixtures/tests first.
 6. Do not perform generic recurrence exception live writes yet.
+
+---
+
+# P8 Current Status — IN PROGRESS
+
+```text
+P8-A   Bootstrap Core / Fake Integration: COMPLETE
+P8-A.1 Deterministic Google Event ID Recovery: COMPLETE
+P8-B   CLI / Doctor / Read-only Gate: IMPLEMENTED
+P8-B.1 Canonical classification / exception scope review: COMPLETE
+P8-B.2 Unnamed existing out-of-scope Label contract: COMPLETE
+P8-B.3 Recurrence Diagnostic: COMPLETE
+P6.1 exact all-day YEARLY extension: IMPLEMENTED
+Live Write: 0
+P8-C   Live Bootstrap: NOT STARTED
+```
+
+P8-B.1 aligns TimeTree classification with the canonical order:
+
+```text
+category/type classification
+→ Label Scope for normal Calendar Events
+→ P7 exception evidence check for in-scope SYNC candidates only
+```
+
+Birthday, Memo, and out-of-scope normal Events are ignored before the
+exception gate. Generic recurrence exception writes remain CLOSED.
+
+Current read-only gate blockers:
+
+- none
+
+Latest authoritative live read-only result:
+
+- Doctor: PASS
+- Bootstrap dry-run: PASS
+- `ready_for_live_bootstrap = true`
+- `remote_writes = 0`
+
+The current live TimeTree snapshot has no in-scope exception evidence after
+classification. Existing unnamed out-of-scope Label IDs are ignored without
+inferring a Label name. No Google or TimeTree remote write has been executed.
+
+P8-B.3 previously identified one in-scope normal Calendar Event recurrence
+shape before P6.1:
+
+```text
+event_kind: series
+all_day: true
+effective_timezone_relation: same
+property_names: RRULE
+recurrence_lines: RRULE:FREQ=YEARLY
+reason_code: UNSUPPORTED_RECURRENCE_FEATURE (historical pre-P6.1 result)
+reason: P6 writable RRULE requires FREQ=WEEKLY (historical pre-P6.1 result)
+```
+
+P6.1 now enables this exact all-day YEARLY shape. Parameterized, timed, or
+otherwise unconfirmed YEARLY variants remain unsupported and generic
+recurrence exception writes remain closed.
 
 ---
 
@@ -1160,10 +1246,10 @@ Branch:
 main
 
 Latest implementation checkpoint:
-c3bf348 feat: add P6 recurrence series core
+9ee7648 feat: add P8 bootstrap read-only gate
 
 Worktree:
-dirty; unrelated user changes are preserved
+dirty; P8-B.1 changes are uncommitted
 
 Completed:
 P0
@@ -1174,15 +1260,22 @@ P4 + Google Live E2E
 P5 + TimeTree Live CRUD
 P6 + TimeTree/Google Live Series E2E
 P7 safe-stop contract + Label Contract
+P8-A Bootstrap Core / Fake Integration
+P8-A.1 deterministic Google Event ID Recovery
+P8-B CLI / Doctor / Read-only Gate
+P8-B.1 canonical classification / exception scope review
+P8-B.2 unnamed existing out-of-scope Label contract
+P8-B.3 recurrence diagnostic
 
 Final regression:
 P2 14/14
-P3 36/36
+P3 37/37
 P4 17/17
 P5 14/14
-P6 15/15
+P6 18/18
 P7 19/19
-Total 115/115
+P8 51/51
+Total 170/170
 
 Live:
 TimeTree P6 10/10 true
@@ -1191,9 +1284,22 @@ cleanup true
 TimeTree P7 exception evidence read: safe-stop contract confirmed
 TimeTree Label Contract live write: PASS
 P7 Test Artifact final full read: 0
+P8-B.2/P6.1 Live Read-only Gate: PASS
+P8-B.3 Recurrence Diagnostic after P6.1: unsupported_count = 0
+Google credentials: configured; credential file existence PASS
+TimeTree raw events: 360
+TimeTree eligible: 90
+TimeTree ignored: 270
+TimeTree unsupported: 0
+TimeTree exception evidence after classification: 0
+TimeTree unnamed out-of-scope Label events: 20
+TimeTree unresolved Label events: 0
+TimeTree recurrence diagnostics: 0
+Google live events: 0; tombstones: 20; unmanaged: 0
+SQLite bootstrap state / links / pending operations / conflicts: empty
 
 Next:
-P8 — NOT STARTED (do not begin in this closure)
+P8-C — NOT STARTED; Live Bootstrap intentionally not executed
 
 Critical guard:
 P7 generic recurrence exception writes are still CLOSED.

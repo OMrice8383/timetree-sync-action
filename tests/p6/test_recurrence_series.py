@@ -7,7 +7,12 @@ from datetime import date, datetime
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-from bridge.adapters import UnsupportedEventError, normalize_google_event
+from bridge.adapters import (
+    UnsupportedEventError,
+    normalize_google_event,
+    normalize_timetree_event,
+)
+from bridge.canonical import canonicalize_recurrence
 from bridge.google_client import GoogleClientError, google_event_body
 from bridge.models import (
     EventKind,
@@ -24,9 +29,7 @@ from bridge.timetree_client import (
     timetree_update_body,
 )
 
-TEST_LABEL_CATALOG = TimeTreeLabelCatalog.from_mapping(
-    {3: "大河予定", 10: "共通予定"}
-)
+TEST_LABEL_CATALOG = TimeTreeLabelCatalog.from_mapping({3: "大河予定", 10: "共通予定"})
 
 
 class TextBlock:
@@ -162,6 +165,92 @@ class RecurrenceContractTests(unittest.TestCase):
                     all_day=False,
                     timezone="Asia/Tokyo",
                 )
+
+    def test_yearly_contract_is_exact_all_day_only(self) -> None:
+        self.assertEqual(
+            validate_recurrence_lines(
+                ("RRULE:FREQ=YEARLY",),
+                all_day=True,
+                timezone=None,
+            ),
+            ("RRULE:FREQ=YEARLY",),
+        )
+
+        unsupported_all_day = (
+            "RRULE:FREQ=YEARLY;INTERVAL=2",
+            "RRULE:FREQ=YEARLY;COUNT=2",
+            "RRULE:FREQ=YEARLY;UNTIL=20301231",
+            "RRULE:FREQ=YEARLY;BYDAY=TU",
+            "RRULE:FREQ=YEARLY;BYMONTH=2",
+            "RRULE:FREQ=YEARLY;BYMONTHDAY=2",
+            "RRULE:FREQ=YEARLY;INTERVAL=1",
+        )
+        for line in unsupported_all_day:
+            with (
+                self.subTest(line=line),
+                self.assertRaises(RecurrenceContractError),
+            ):
+                validate_recurrence_lines(
+                    (line,),
+                    all_day=True,
+                    timezone=None,
+                )
+
+        with self.assertRaises(RecurrenceContractError):
+            validate_recurrence_lines(
+                ("RRULE:FREQ=YEARLY",),
+                all_day=False,
+                timezone="Asia/Tokyo",
+            )
+        with self.assertRaises(RecurrenceContractError):
+            validate_recurrence_lines(
+                (
+                    "RRULE:FREQ=YEARLY",
+                    "EXDATE;VALUE=DATE:20300212",
+                ),
+                all_day=True,
+                timezone=None,
+            )
+
+    def test_google_and_timetree_yearly_normalization_has_same_canonical_rule(
+        self,
+    ) -> None:
+        google = normalize_google_event(
+            {
+                "id": "google-yearly-series",
+                "status": "confirmed",
+                "eventType": "default",
+                "summary": "Yearly series",
+                "start": {"date": "2030-01-15"},
+                "end": {"date": "2030-01-16"},
+                "recurrence": ["RRULE:FREQ=YEARLY"],
+            },
+            source_calendar_id="google-calendar",
+            default_timezone="Asia/Tokyo",
+        )
+        timetree = normalize_timetree_event(
+            {
+                "uuid": "timetree-yearly-series",
+                "calendar_id": 123,
+                "title": "Yearly series",
+                "all_day": True,
+                "start_at": 1894665600000,
+                "start_timezone": "UTC",
+                "end_at": 1894665600000,
+                "end_timezone": "UTC",
+                "category": 1,
+                "type": 0,
+                "label_id": 10,
+                "recurrences": ["RRULE:FREQ=YEARLY"],
+            },
+            default_timezone="Asia/Tokyo",
+            label_catalog=TEST_LABEL_CATALOG,
+        )
+        self.assertEqual(google.recurrence.lines, timetree.recurrence.lines)
+        self.assertEqual(
+            canonicalize_recurrence(google.recurrence.lines),
+            ("RRULE:FREQ=YEARLY",),
+        )
 
     def test_exdate_forms_are_context_safe(self) -> None:
         validate_recurrence_lines(
@@ -304,6 +393,25 @@ class GoogleSeriesWriteTests(unittest.TestCase):
         self.assertEqual(body["start"], {"date": "2030-02-05"})
         self.assertEqual(body["end"], {"date": "2030-02-06"})
         self.assertIn("EXDATE;VALUE=DATE:20300212", body["recurrence"])
+
+    def test_all_day_yearly_series_body_uses_exact_rule(self) -> None:
+        yearly = replace(
+            all_day_series(),
+            recurrence=Recurrence(("RRULE:FREQ=YEARLY",)),
+        )
+        google_body = google_event_body(
+            yearly,
+            allow_recurrence_write=True,
+        )
+        timetree_body = timetree_event_body(
+            yearly,
+            calendar_id="123",
+            default_timezone="Asia/Tokyo",
+            allow_recurrence_write=True,
+            label_catalog=TEST_LABEL_CATALOG,
+        )
+        self.assertEqual(google_body["recurrence"], ["RRULE:FREQ=YEARLY"])
+        self.assertEqual(timetree_body["recurrences"], ["RRULE:FREQ=YEARLY"])
 
 
 class TimeTreeSeriesWriteTests(unittest.IsolatedAsyncioTestCase):

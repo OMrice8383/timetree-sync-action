@@ -751,6 +751,20 @@ delete
 
 # 20. V1設計上の完成条件
 
-完成条件の正本は**要件定義 v0.11**とする。
+完成条件の正本は**要件定義 v0.12**とする。
 
 本基本設計は、その完成条件を上記Architecture / Component責務で満たす。
+
+---
+
+# P6.1 YEARLY Recurrence Extension
+
+P6のsupported series subsetへ、all-dayかつexact `RRULE:FREQ=YEARLY`だけを追加
+する。Timed YEARLY、YEARLYの`INTERVAL` / `COUNT` / `UNTIL` / `BYDAY` /
+`BYMONTH` / `BYMONTHDAY` / `EXDATE` / その他parameter、ならびにDAILY /
+MONTHLY等はUnsupportedのまま維持する。
+
+GoogleとTimeTreeでCreate / Read / Update / Clear / Restore / Delete / Cleanupを
+Live確認済みで、TimeTree UUID維持も確認済みである。P8 Bootstrapの共通分類では
+このexact形を通常のSYNC candidateとして扱う。Recurrence Exception write gateは
+変更しない。

@@ -903,7 +903,7 @@ Primary障害時に自動Fallback Writeしない。
 完成条件の正本：
 
 ```text
-timetree取得_要件定義_v0.11.md
+timetree取得_要件定義_v0.12.md
 ```
 
 最終確認：
@@ -1056,3 +1056,22 @@ V1完成状態
 最初にCodexへ渡すのは**P0だけ**。
 
 P0完了結果をChatGPTでレビューするまでP1以降へ進まない。
+
+---
+
+# P6.1｜YEARLY Recurrence Extension
+
+P6のWEEKLY contractを変更せず、Live確認済みの最小拡張だけを実装する。
+
+```text
+supported: all-day + RRULE:FREQ=YEARLY
+unsupported: timed YEARLY and every YEARLY variant with parameters or EXDATE
+```
+
+Gateは、P6 WEEKLY回帰、YEARLY variant fail-safe、Google / TimeTree normalized
+canonical一致、P8 Bootstrap classification eligible、ruff / compileall /
+git diff --check、およびread-only `bootstrap --dry-run --json`とする。
+Live write、P8 live bootstrap、Exception write、P9以降はこのPhaseのscope外。
+
+Google / TimeTreeのCreate / Read / Update / Clear / Restore / Delete / Cleanup
+とTimeTree UUID維持はLive Contract DiscoveryでPASS済みとして記録する。

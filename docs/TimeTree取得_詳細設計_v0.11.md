@@ -530,6 +530,14 @@ SYNC可能な通常Event
 → LABEL_OUT_OF_SCOPE
 ```
 
+Calendar Label Catalogに存在するLabel IDが、runtimeで一意解決済みの
+`大河予定` / `共通予定`のどちらのIDにも一致しない場合は、Label名が空または
+`null`であっても、Label名を推測せず`LABEL_OUT_OF_SCOPE`として
+`IGNORE_KNOWN`に分類する。
+
+`label_id`欠落、Catalogに存在しないID、または`大河予定` / `共通予定`自体を
+一意に解決できない場合は`UNSUPPORTED`としてsafe-stopする。
+
 Normalized Eventの`label`には数値IDではなくLabel名を入れる。
 
 TimeTreeへのCreate / Label変更Write時だけ、Normalized `label`をruntime `label_id`へ変換する。
@@ -2115,6 +2123,29 @@ Primary障害時に自動Fallback Writeしない。
 
 # 34. V1完成判定の参照
 
-完成条件の正本は`要件定義 v0.11`。
+完成条件の正本は`要件定義 v0.12`。
 
 本詳細設計で定義したTest / E2Eがその完成条件を満たすことを実装計画P15で最終検証する。
+
+---
+
+# P6.1 YEARLY Recurrence Extension
+
+Validatorはraw RRULEのparameter集合をcanonicalization前にも確認し、次だけを
+受理する。
+
+```text
+all_day = true
+exactly one line = RRULE:FREQ=YEARLY
+```
+
+従って、canonicalizerが`INTERVAL=1`等を省略できる場合でも、YEARLYに追加
+parameterがあればUnsupportedとする。Timed YEARLY、YEARLY + `INTERVAL` /
+`COUNT` / `UNTIL` / `BYDAY` / `BYMONTH` / `BYMONTHDAY` / `EXDATE`、その他の
+未確認variantは`UNSUPPORTED_RECURRENCE_FEATURE`とする。Google / TimeTreeの
+Normalized recurrenceは同じcanonical lineになる。
+
+Live evidenceはGoogle / TimeTreeともCreate / Read / Update / Clear / Restore /
+Delete / Cleanup = PASS、TimeTree UUID維持 = PASS、cleanup後artifact = 0。
+P8 Bootstrapのread-only classificationではexact YEARLYをeligibleとして扱い、
+generic recurrence exception writeは引き続き拒否する。
