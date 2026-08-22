@@ -1170,7 +1170,7 @@ P8-B.2 Unnamed existing out-of-scope Label contract: COMPLETE
 P8-B.3 Recurrence Diagnostic: COMPLETE
 P6.1 exact all-day YEARLY extension: IMPLEMENTED
 Live Write: 0
-P8-C   Live Bootstrap: NOT STARTED
+P8-C   Live Bootstrap CLI / Recovery Gate: COMPLETE; Live Bootstrap NOT EXECUTED
 ```
 
 P8-B.1 aligns TimeTree classification with the canonical order:
@@ -1246,7 +1246,7 @@ Branch:
 main
 
 Latest implementation checkpoint:
-8df34ed feat: complete P8 bootstrap safety gate and yearly recurrence support
+d57387c feat: add P8-C live bootstrap recovery gate
 
 Worktree:
 clean; main synced with origin/main
@@ -1266,6 +1266,7 @@ P8-B CLI / Doctor / Read-only Gate
 P8-B.1 canonical classification / exception scope review
 P8-B.2 unnamed existing out-of-scope Label contract
 P8-B.3 recurrence diagnostic
+P8-C Live Bootstrap CLI / Recovery Gate
 
 Final regression:
 P2 14/14
@@ -1274,8 +1275,8 @@ P4 17/17
 P5 14/14
 P6 18/18
 P7 19/19
-P8 51/51
-Total 170/170
+P8 62/62
+Total 181/181
 
 Live:
 TimeTree P6 10/10 true
@@ -1286,6 +1287,11 @@ TimeTree Label Contract live write: PASS
 P7 Test Artifact final full read: 0
 P8-B.2/P6.1 Live Read-only Gate: PASS
 P8-B.3 Recurrence Diagnostic after P6.1: unsupported_count = 0
+P8-C final Live read-only Doctor: PASS
+P8-C final Bootstrap dry-run: PASS
+P8-C ready_for_live_bootstrap: true
+P8-C remote_writes: 0
+P8-C recovery.authorized: false (expected clean-start state)
 Google credentials: configured; credential file existence PASS
 TimeTree raw events: 360
 TimeTree eligible: 90
@@ -1296,10 +1302,11 @@ TimeTree unnamed out-of-scope Label events: 20
 TimeTree unresolved Label events: 0
 TimeTree recurrence diagnostics: 0
 Google live events: 0; tombstones: 20; unmanaged: 0
-SQLite bootstrap state / links / pending operations / conflicts: empty
+SQLite bootstrap state / links / sync operations / failed operations / conflicts: empty
 
 Next:
-P8-C — NOT STARTED; Live Bootstrap intentionally not executed
+P8 Live Bootstrap — final pre-write Gate, then first persistent Bootstrap execution
+P8-C implementation is checkpointed; Live Bootstrap intentionally not executed yet
 
 Critical guard:
 P7 generic recurrence exception writes are still CLOSED.
