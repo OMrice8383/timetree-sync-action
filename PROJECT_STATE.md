@@ -1159,7 +1159,7 @@ Historical P7 entry sequence:
 
 ---
 
-# P8 Current Status — IN PROGRESS
+# P8 Current Status — COMPLETE
 
 ```text
 P8-A   Bootstrap Core / Fake Integration: COMPLETE
@@ -1169,8 +1169,8 @@ P8-B.1 Canonical classification / exception scope review: COMPLETE
 P8-B.2 Unnamed existing out-of-scope Label contract: COMPLETE
 P8-B.3 Recurrence Diagnostic: COMPLETE
 P6.1 exact all-day YEARLY extension: IMPLEMENTED
-Live Write: 0
-P8-C   Live Bootstrap CLI / Recovery Gate: COMPLETE; Live Bootstrap NOT EXECUTED
+Live Write: 90 Google persistent adapter events; TimeTree writes: 0
+P8-C   Live Bootstrap CLI / Recovery Gate: COMPLETE; Live Bootstrap COMPLETE
 ```
 
 P8-B.1 aligns TimeTree classification with the canonical order:
@@ -1184,20 +1184,53 @@ category/type classification
 Birthday, Memo, and out-of-scope normal Events are ignored before the
 exception gate. Generic recurrence exception writes remain CLOSED.
 
-Current read-only gate blockers:
+P8 Live Bootstrap result:
 
-- none
+- Bootstrap mode: `clean`
+- eligible Event: 90
+- created Event: 90
+- recovered Event: 0
+- Google remote writes: 90
+- TimeTree remote writes: 0
+- final Bootstrap Consistency Check: PASS
+- Google sync token committed
+- Bootstrap watermark committed
+- `bridge_bootstrapped_at` committed
 
-Latest authoritative live read-only result:
+Post-Bootstrap read-only verification:
 
-- Doctor: PASS
-- Bootstrap dry-run: PASS
-- `ready_for_live_bootstrap = true`
-- `remote_writes = 0`
+- Google live Event: 90
+- Google managed Event: 90
+- Google unmanaged Event: 0
+- TimeTree eligible Event: 90
+- TimeTree unsupported Event: 0
+- TimeTree exception evidence: 0
+- recurrence unsupported: 0
+- post-Bootstrap dry-run safely blocks re-Bootstrap because DB is already bootstrapped
+
+SQLite verification:
+
+- event_links: 90
+- distinct TimeTree IDs: 90
+- distinct Google IDs: 90
+- null Google IDs: 0
+- Event kind: single 89 / series 1
+- sync_operations: 90
+- operation state: done 90
+- applied/completed operation missing target ID: 0
+- open conflicts: 0
+- required Bootstrap sync state: present
+
+Local-only idempotency verification:
+
+- Google / TimeTree credentials removed
+- Bootstrap returned `already_bootstrapped`
+- remote writes: 0
+- external credentials/services not required
 
 The current live TimeTree snapshot has no in-scope exception evidence after
-classification. Existing unnamed out-of-scope Label IDs are ignored without
-inferring a Label name. No Google or TimeTree remote write has been executed.
+classification. Existing unnamed out-of-scope Label IDs remain safely ignored.
+Generic recurrence exception writes remain CLOSED.
 
 P8-B.3 previously identified one in-scope normal Calendar Event recurrence
 shape before P6.1:
@@ -1267,6 +1300,7 @@ P8-B.1 canonical classification / exception scope review
 P8-B.2 unnamed existing out-of-scope Label contract
 P8-B.3 recurrence diagnostic
 P8-C Live Bootstrap CLI / Recovery Gate
+P8 Live Bootstrap + post-Bootstrap verification
 
 Final regression:
 P2 14/14
@@ -1287,11 +1321,14 @@ TimeTree Label Contract live write: PASS
 P7 Test Artifact final full read: 0
 P8-B.2/P6.1 Live Read-only Gate: PASS
 P8-B.3 Recurrence Diagnostic after P6.1: unsupported_count = 0
-P8-C final Live read-only Doctor: PASS
-P8-C final Bootstrap dry-run: PASS
-P8-C ready_for_live_bootstrap: true
-P8-C remote_writes: 0
-P8-C recovery.authorized: false (expected clean-start state)
+P8-C final pre-write Doctor: PASS
+P8-C final pre-write Bootstrap dry-run: PASS
+P8 Live Bootstrap: PASS
+P8 Bootstrap mode: clean
+P8 eligible / created / recovered: 90 / 90 / 0
+P8 Google remote writes: 90
+P8 TimeTree remote writes: 0
+P8 post-Bootstrap idempotency: PASS; remote_writes = 0
 Google credentials: configured; credential file existence PASS
 TimeTree raw events: 360
 TimeTree eligible: 90
@@ -1301,12 +1338,20 @@ TimeTree exception evidence after classification: 0
 TimeTree unnamed out-of-scope Label events: 20
 TimeTree unresolved Label events: 0
 TimeTree recurrence diagnostics: 0
-Google live events: 0; tombstones: 20; unmanaged: 0
-SQLite bootstrap state / links / sync operations / failed operations / conflicts: empty
+Google live events: 90; managed: 90; tombstones: 20; unmanaged: 0
+SQLite bootstrapped: true
+SQLite event_links: 90
+SQLite sync_operations: 90 done / 0 pending / 0 failed
+SQLite open conflicts: 0
+SQLite Event kind: 89 single / 1 series
+Bootstrap sync states: google_sync_token / timetree_updated_after_ms / bridge_bootstrapped_at present
+Local-only already_bootstrapped verification: PASS; remote writes 0
 
 Next:
-P8 Live Bootstrap — final pre-write Gate, then first persistent Bootstrap execution
-P8-C implementation is checkpointed; Live Bootstrap intentionally not executed yet
+P9 — Google → TimeTree
+
+P8 is COMPLETE.
+Do not redo P8 unless a regression or design conflict is discovered.
 
 Critical guard:
 P7 generic recurrence exception writes are still CLOSED.
